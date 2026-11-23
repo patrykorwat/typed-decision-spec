@@ -14,26 +14,78 @@ calibration quality are empirical and stay in prose.
 
 | Theorem | File | Contract claim |
 |---|---|---|
-| `Response` (structure) | `Basic.lean` | `conf` is the top probability; `argmax` indexes a declared option — "the answer can never fall outside the options you gave" (basal README; SanSi §3: `p ∈ Δ^K`, no text) |
-| `gate_conforming` | `Defer.lean` | below the certified threshold the gate returns NO decision — for every question type |
-| `ungated_not_conforming` | `Defer.lean` | a gate that decides below threshold outside `act`/`tool` violates the contract — the verified basal 2.8.1 finding (`max_error` accepted and silently ignored on `choice`/`noul`/`score`/`multi`) as a type |
-| `isHard_K2` / `isHard_K2_pct` | `Defer.lean` | hard-answer boundary pinned: for binary questions, hard answer iff confidence ≥ 75% (SanSi §4 metrics: top probability below (1+1/K)/2) |
-| `run_length` / `budget_at` | `Loop.lean` | one run with T loops stores every budget's readout — "one pass with T loops yields the decisions of all budgets 1..T" (SanSi §3) |
-| `reinjection_differs` | `Loop.lean` | re-injecting tokens each loop is a DIFFERENT model — demonstrated by a witness (0 vs 1 at loop 1) |
-| `no_calib_never_decides` | `Loop.lean` | a threshold without its loop index decides nothing — calibration is bound to the loop it was fitted at (SanSi §5.3: ECE best at loop 3, climbing again by loop 8) |
+| `Response` (structure) | `Basic.lean` | response is bound to the DECLARED options (`declared` is a field — a response pointing outside the caller's options is not constructible); K ≥ 2 enforced; `probs` is the integer core of `p ∈ Δ^K`: entries ≤ 100 and summing to 100 |
+| `top_ge_100_over_K` | `Basic.lean` | normalization forces the top probability ≥ 100/K (pigeonhole) |
+| `gate_conforming` | `Defer.lean` | below the certified threshold the gate returns NO decision — typed by `QType`, so the claim covers every question type |
+| `selective_not_conforming` | `Defer.lean` | a gate that decides below threshold outside `act`/`tool` violates the contract — the REPORTED basal 2.8.1 finding as a type (one counterexample type kills the universal claim) |
+| `isHard_K2` | `Defer.lean` | hard-answer boundary pinned (EVALUATION threshold, SanSi §4): for binary questions, hard answer iff confidence ≥ 75% |
+| `run_length` / `budget_at` | `Loop.lean` | one run with T loops yields every budget 1..T (per SanSi §3; `h_0` is the token encoding, not a readout), and budget t's readout sits at INDEX t-1 of the trace |
+| `reinjection_differs` | `Loop.lean` | re-injecting tokens each loop is a DIFFERENT model — demonstrated by a witness |
+| `wrong_loop_never_decides` / `no_calib_never_decides` | `Loop.lean` | a calibration applies only at its own question type and loop index; without a calibration record the engine refuses |
 
 `spec_T = 8` is pinned like sejmbench's `MIN_TRACK_RECORDS`: other budgets
 are a `v2`, never a silent change.
 
+## Three thresholds, kept apart
+
+1. **HardAnswerThreshold** (`isHard`) — evaluation-only (SanSi §4 metrics:
+   an unanswerable item is right when the model gives no hard answer,
+   top probability below (1+1/K)/2). NOT a production gating policy.
+2. **CalibrationThreshold** (`Calib.τ`) — operational, question-type
+   specific, from `basal-calibrate`. `certified : τ ≤ 100` is only the
+   structural bound of the stored number; statistical certification is
+   empirical and outside this model.
+3. **DecisionGate** (`gate`) — the policy consuming a calibration.
+
+## The basal 2.8.1 max_error finding: reported, not independently certified
+
+Observed on a live basal 2.8.1 server (2026-11, recorded in the
+basal-serve workflow notes): `max_error` accepted in the payload with
+zero deferrals below the certified threshold on `choice`/`noul`/`score`/
+`multi`; only `act`/`tool` gated. NOTE: the published v2.8.1 API docs
+describe `max_error` for choice/noul/score with an `abstain` result
+field — that docs/behavior gap is itself part of the finding, and this
+repository does not contain an independent HTTP reproduction.
+Status: **reported finding, reproduction pending** (`selectiveGate` /
+`UngatedEngine` encode the *class*, not the verified instance).
+
+## Conformance bridge (three-way)
+
+`test-vectors/tier1.json` carries Tier-1 golden vectors derived from the
+spec's pinned integer math, frozen and sha256-checked (`vectors_sha256`,
+canonical form with the field removed). `conformance/conformance.py` runs
+a three-way differential test:
+
+1. **Lean** — `conformance/ExportVectors.lean` computes the expected
+   values FROM the proved definitions (`iter`, `confAt`, `run`, `isHard`,
+   gate semantics) via `lake env lean --run`; this closes the
+   "generator implements its own math" gap.
+2. **Frozen** — the sha256-pinned vectors.
+3. **Python engines** — `ReferenceEngine` must match every vector;
+   `ReinjectedEngine` must DIVERGE from the frozen trace (executable
+   twin of `reinjection_differs`); `UngatedEngine` must violate
+   conformance below the threshold for every affected question type
+   (choice/noul/score/multi) while `act`/`tool` stay gated.
+
+A deliberate divergence fails the suite; a silent engine change cannot
+pass unnoticed. The hash stored next to the data detects accidental
+drift; provenance is the git history of `gen_vectors.py` + the Lean
+export run recorded in CI logs.
+
+```
+lake build                                # the proofs (10/10, zero warnings)
+python3 conformance/conformance.py --all  # 6 checks, exit 0
+```
+
 ## Scope — read before citing
 
 * This is a spec artifact: it proves properties of the **specification**.
-  The conformance bridge below provides frozen Tier-1 vectors and
-  differential testing for the pinned integer math. This is fixed-sample
-  regression testing, **not** a machine-checked equivalence between the
-  spec and any real engine (basal, SanSi or otherwise).
-* Percentages are the integer core (`Pct = Nat`, 0..100): the contract is
-  pinned on integers, calibration files stay decimal. Extended contract
+  The conformance bridge provides frozen Tier-1 vectors and differential
+  testing for the pinned integer math. This is fixed-sample regression
+  testing, **not** a machine-checked equivalence between the spec and any
+  real engine (basal, SanSi or otherwise).
+* Percentages are the integer core (`Pct = Nat`, bounded and normalized
+  on `Response`); calibration files stay decimal. Extended contract
   surface (probabilities as exact distributions, `extract`, `multi`
   min/max, error costs) is Tier-2 and outside this revision.
 * Settling behaviour of loops (SanSi §5.2: 89.1% of answers final by
@@ -44,26 +96,17 @@ are a `v2`, never a silent change.
   `no_calib_never_decides`; a first-class theorem needs a weights model
   and is Tier-2.
 
-## Conformance bridge
+## Version history
 
-`test-vectors/tier1.json` carries Tier-1 golden vectors derived from the
-spec's pinned integer math (encode-once, `step`, `read`, `confAt`,
-`isHard`, gate at τ=75, and the reinjected counterexample), frozen and
-sha256-checked (`vectors_sha256`, canonical form with the field removed).
-`conformance/conformance.py` is a real differential test:
-
-* `ReferenceEngine` must match every vector (trace, boundary, gating);
-* `ReinjectedEngine` must DIVERGE from the frozen trace from loop 1 on —
-  the executable twin of `reinjection_differs`;
-* `UngatedEngine` must violate conformance below the threshold — the
-  basal 2.8.1 bug class, reproduced and asserted.
-
-A deliberate divergence fails the suite; a silent engine change cannot
-pass unnoticed.
-
-```
-python3 conformance/conformance.py --all   # 5 checks, exit 0
-```
+* **v1.1** (this revision): response bound to declared options; K ≥ 2 and
+  normalization enforced (`probs ≤ 100`, `sum = 100`); `Conforming` typed
+  by `QType`; calibration bound to its own type and loop index
+  (`wrong_loop_never_decides`); loop trace budgets 1..T with per-loop
+  readout (`read : Nat → Nat → Pct`); `budget_at` pins the exact index;
+  hard-answer (eval) threshold separated from calibration threshold;
+  basal 2.8.1 finding downgraded to reported + docs-contradiction note;
+  conformance bridge extended with the Lean differential export.
+* **v1.0** (2026-11-23): initial revision.
 
 ## Building
 
@@ -75,16 +118,18 @@ lake build          # inside this directory
 ```
 
 CI runs the same build in the `lean-spec` job of `.github/workflows/ci.yml`
-and the conformance suite in `conformance` — a proof or a vector that no
+and the three-way conformance suite in `conformance` (which builds the
+project first, then runs the Lean export) — a proof or a vector that no
 longer holds fails the build loudly instead of silently drifting.
 
 ## Files
 
 * `TypedDecision.lean` — root module
-* `TypedDecision/Basic.lean` — response contract
-* `TypedDecision/Defer.lean` — gating, deferral, hard-answer boundary
-* `TypedDecision/Loop.lean` — looped engines (System 1.5)
+* `TypedDecision/Basic.lean` — response contract (declared options, K ≥ 2, normalization)
+* `TypedDecision/Defer.lean` — gating, deferral, threshold separation
+* `TypedDecision/Loop.lean` — looped engines (System 1.5), calibration binding
 * `test-vectors/tier1.json` — frozen Tier-1 vectors (sha256-pinned)
 * `conformance/gen_vectors.py` — derives and freezes the vectors (run once)
-* `conformance/conformance.py` — differential conformance suite
+* `conformance/ExportVectors.lean` — computes expected values from the Lean definitions
+* `conformance/conformance.py` — three-way differential conformance suite
 * `.github/workflows/ci.yml` — `lean-spec` + `conformance` jobs

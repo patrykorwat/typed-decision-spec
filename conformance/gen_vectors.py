@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""Derive Tier-1 vectors from the spec's pinned integer math (run once;
-output is frozen into test-vectors/tier1.json and sha256-pinned).
+"""Derive and freeze the Tier-1 vectors (run once; output is sha256-pinned).
 
-Spec math (mirrors TypedDecision/Loop.lean and TypedDecision/Defer.lean):
+Spec math — mirrors TypedDecision/{Loop,Defer}.lean (v1.1):
   encode(text) = int(sha256(text)[:8], 16) % 2**31        # tokens encoded ONCE
   step(h)      = (A*h + B) % M                            # one stack pass
-  read(h)      = (W*h) % 100                              # confidence, percentage
-  confAt(t)    = read(step^[t](h0))                       # loop-t readout
-  isHard(K=2)  : conf >= 75
-  gate(tau)    : decide iff conf >= tau
-  reinjected   : h_{t+1} = step(h_t) + h0                 # the WRONG engine
+  read(t, h)   = (W*h) % 100                               # per-loop readout
+  confAt(t)    = read(t, step^[t](h0))                     # budgets 1..T
+  isHard(K=2)  : conf >= 75                                # eval boundary
+  gate(tau)    : decide iff conf >= tau                    # calibration gate
+  reinjected   : h_{t+1} = step(h_t) + h0                  # the WRONG engine
+
+The same math is ALSO computed by conformance/ExportVectors.lean straight
+from the Lean definitions; conformance.py asserts frozen == Lean == Python.
 """
 import hashlib
 import json
@@ -47,10 +49,11 @@ def reinjected_conf_at(h0: int, t: int) -> int:
 
 def main() -> None:
     h0 = encode(STATE)
-    conf = [conf_at(h0, t) for t in range(T + 1)]
-    reinj = [reinjected_conf_at(h0, t) for t in range(T + 1)]
+    # budgets 1..T (SanSi §3) — h_0 is the token encoding, not a readout
+    conf = [conf_at(h0, t) for t in range(1, T + 1)]
+    reinj = [reinjected_conf_at(h0, t) for t in range(1, T + 1)]
     vectors = {
-        "spec": "typed-decision-spec v1",
+        "spec": "typed-decision-spec v1.1",
         "note": "derived from the spec definitions, frozen; never from an engine",
         "pin": {"A": A, "B": B, "M": M, "W": W, "T": T},
         "state": STATE,

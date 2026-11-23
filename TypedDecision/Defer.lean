@@ -4,15 +4,25 @@ import TypedDecision.Basic
 # Typed decision contract: confidence gating and deferral
 
 Pins the escalation semantics. The normative content is `Conforming`:
-BELOW the certified threshold, a gate returns NO decision (`none`).
-This is the property the basal 2.8.1 engine violated for `choice`,
-`noul`, `score` and `multi`: `max_error` was accepted in the payload
-and silently ignored (verified 2026-11: zero deferred, answers below
-the certified threshold went through) — only `act`/`tool` gated.
+BELOW the certified threshold, a gate returns NO decision (`none`) —
+now typed by `QType`, so the claim covers every question type.
 
-The hard-answer boundary mirrors SanSi §4 metrics: an unanswerable
-item is right when the model gives no hard answer, i.e. its top
-probability is below (1 + 1/K)/2. Here in the integer percentage core.
+Three thresholds are deliberately kept apart:
+
+* `HardAnswerThreshold` (`isHard`, evaluation — SanSi §4 metrics):
+  an unanswerable item is right when the model gives no hard answer,
+  i.e. its top probability is below (1 + 1/K)/2. Evaluation-only.
+* `CalibrationThreshold` (`Calib.τ`, Loop.lean — operational): comes
+  from `basal-calibrate`, is question-type-specific, and its
+  statistical certification is empirical (outside this model).
+* `DecisionGate` (`gate`): the policy consuming a calibration.
+
+The `selectiveGate` witness encodes the REPORTED basal 2.8.1 finding
+(observed on a live 2.8.1 server, 2026-11: `max_error` accepted in the
+payload, zero deferrals below the certified threshold; note the
+published v2.8.1 API docs describe `max_error` for choice/noul/score
+with an `abstain` result field — that docs/behavior gap is itself part
+of the finding). Independent HTTP reproduction: pending.
 -/
 
 namespace TypedDecision
@@ -26,18 +36,20 @@ inductive QType
   | act | tool | choice | noul | score | multi
   deriving DecidableEq, Repr
 
-/-- The conforming gate: decide only at or above the threshold. -/
-def gate (τ : Pct) (r : Response) : Decision :=
+/-- The conforming gate: decide only at or above the threshold —
+for EVERY question type. -/
+def gate (ty : QType) (τ : Pct) (r : Response) : Decision :=
   if τ ≤ r.conf then some r.argmax else none
 
 /-- A gating policy is conforming when below-threshold confidence
-never produces a decision — for EVERY question type. -/
-def Conforming (g : Response → Pct → Decision) : Prop :=
-  ∀ (r : Response) (τ : Pct), r.conf < τ → g r τ = none
+never produces a decision, for any question type, response and
+threshold. -/
+def Conforming (g : QType → Response → Pct → Decision) : Prop :=
+  ∀ (ty : QType) (r : Response) (τ : Pct), r.conf < τ → g ty r τ = none
 
 /-- The conforming gate is conforming. -/
-theorem gate_conforming : Conforming (fun (r : Response) (τ : Pct) => gate τ r) := by
-  intro r τ h
+theorem gate_conforming : Conforming (fun ty r τ => gate ty τ r) := by
+  intro ty r τ h
   simp only [gate]
   split
   · exfalso; exact Nat.not_le.mpr h ‹τ ≤ r.conf›
@@ -45,39 +57,50 @@ theorem gate_conforming : Conforming (fun (r : Response) (τ : Pct) => gate τ r
 
 /-- The engine bug of basal 2.8.1, as a type: a gate that decides
 for every question type except `act`/`tool`. -/
-def ungatedGate (ty : QType) (τ : Pct) (r : Response) : Decision :=
-  if ty = QType.act ∨ ty = QType.tool then gate τ r else some r.argmax
+def selectiveGate (ty : QType) (r : Response) (τ : Pct) : Decision :=
+  if ty = QType.act ∨ ty = QType.tool then gate ty τ r else some r.argmax
 
-/-- A witness response with confidence 0. -/
-def zeroResponse : Response :=
-  { probs := [0], argmax := 0, conf := 0
-    len := by simp
-    conf_is_top := by simp
-    argmax_mem := by simp
+/-- A witness response: two declared options, probabilities summing to
+100, top probability 50 — BELOW the 5%-target-class thresholds. -/
+def tieResponse : Response :=
+  { declared := ["a", "b"]
+    probs := [50, 50]
+    argmax := 0
+    conf := 50
+    k_ge_2 := by decide
+    len_declared := by decide
+    conf_is_top := by decide
+    argmax_mem := by decide
     argmax_is_max := by
-      intro j _
-      rcases j with _ | j <;> simp }
+      intro j hj
+      have h2 : ([50, 50] : List Pct).length = 2 := rfl
+      have hjn : j < 2 := by omega
+      rcases (by omega : j = 0 ∨ j = 1) with h | h
+      · subst h; simp
+      · subst h; simp
+    probs_le_100 := by
+      intro p hp
+      have h1 : p = 50 ∨ p ∈ [50] := List.mem_cons.mp hp
+      rcases h1 with h | h
+      · subst h; decide
+      · have h3 := List.mem_singleton.mp h
+        subst h3; decide
+    sum_100 := by decide }
 
-/-- The ungated policy is NOT conforming: below-threshold answers go
-through with no deferral. This is exactly the class of the verified
-2.8.1 finding. -/
-theorem ungated_not_conforming (ty : QType)
-    (h : ty ≠ QType.act ∧ ty ≠ QType.tool) :
-    ¬ Conforming (fun (r : Response) (τ : Pct) => ungatedGate ty τ r) := by
+/-- The selective policy is NOT conforming: `choice` decides below the
+threshold with no deferral. ONE counterexample type kills the universal
+claim — that is the point of typing `Conforming` by `QType`. -/
+theorem selective_not_conforming : ¬ Conforming selectiveGate := by
   intro C
-  have violation : ungatedGate ty 1 zeroResponse = none :=
-    C zeroResponse 1 (by decide)
-  simp only [ungatedGate] at violation
-  split at violation
-  · have hc : ty = QType.act ∨ ty = QType.tool := by assumption
-    rcases hc with h1 | h2
-    · exact h.1 h1
-    · exact h.2 h2
-  · exact Option.some_ne_none _ violation
+  have violation : selectiveGate QType.choice tieResponse 75 = none :=
+    C QType.choice tieResponse 75 (by decide)
+  simp only [selectiveGate] at violation
+  exact absurd violation (by decide)
 
-/-- Hard answer boundary, integer core: a hard answer is given iff the
-top probability reaches (1 + 1/K)/2. With `conf` a percentage and K
-options (K ≥ 1), that is `2·K·conf ≥ 100·(K+1)`. -/
+/-- Hard answer boundary, integer core (EVALUATION threshold, SanSi §4
+metrics — not a production gating policy; see module docstring). A hard
+answer is given iff the top probability reaches (1 + 1/K)/2; with `conf`
+a percentage and K options, `2·K·conf ≥ 100·(K+1)`. -/
 def isHard (K : Nat) (conf : Pct) : Prop := 2 * K * conf ≥ 100 * (K + 1)
 
 /-- Pinning the boundary for binary questions: hard answer iff
