@@ -1,0 +1,58 @@
+{
+ "spec": "typed-decision-spec v1",
+ "note": "derived from the spec definitions, frozen; never from an engine",
+ "pin": {
+  "A": 1103515245,
+  "B": 12345,
+  "M": 2147483648,
+  "W": 5,
+  "T": 8
+ },
+ "state": "Zgloszenie naprawy windy, wejscie serwerownia 3p.",
+ "h0": 366159500,
+ "conf_trace": [
+  0,
+  25,
+  70,
+  15,
+  0,
+  85,
+  10,
+  55,
+  80
+ ],
+ "is_hard_K2": [
+  false,
+  false,
+  false,
+  false,
+  false,
+  true,
+  false,
+  false,
+  true
+ ],
+ "gate_tau75": [
+  "none",
+  "none",
+  "none",
+  "none",
+  "none",
+  "argmax",
+  "none",
+  "none",
+  "argmax"
+ ],
+ "reinjected_conf_trace": [
+  0,
+  25,
+  30,
+  15,
+  40,
+  5,
+  10,
+  75,
+  60
+ ],
+ "vectors_sha256": "1207868a389a5e766b2620bfbdc261c67ee6b8c769555fd16f55461317812a5e"
+}
