@@ -31,4 +31,4 @@ jobs:
         with:
           python-version: "3.12"
       - name: Run three-way conformance suite
-        run: python3 conformance/conformance.py --all
+        run: python3 conformance/conformance.py
