@@ -36,10 +36,15 @@ inductive QType
   | act | tool | choice | noul | score | multi
   deriving DecidableEq, Repr
 
+/-- The shared decision predicate: `true` iff the confidence admits a
+decision. Used by `gate`, by the selective witness and by the executable
+conformance export — one definition, no duplication. -/
+def gateP (τ : Pct) (c : Pct) : Bool := τ ≤ c
+
 /-- The conforming gate: decide only at or above the threshold —
 for EVERY question type. -/
 def gate (ty : QType) (τ : Pct) (r : Response) : Decision :=
-  if τ ≤ r.conf then some r.argmax else none
+  if gateP τ r.conf then some r.argmax else none
 
 /-- A gating policy is conforming when below-threshold confidence
 never produces a decision, for any question type, response and
@@ -50,10 +55,8 @@ def Conforming (g : QType → Response → Pct → Decision) : Prop :=
 /-- The conforming gate is conforming. -/
 theorem gate_conforming : Conforming (fun ty r τ => gate ty τ r) := by
   intro ty r τ h
-  simp only [gate]
-  split
-  · exfalso; exact Nat.not_le.mpr h ‹τ ≤ r.conf›
-  · rfl
+  simp only [gate, gateP, decide_eq_true_eq]
+  exact if_neg (Nat.not_le.mpr h)
 
 /-- The engine bug of basal 2.8.1, as a type: a gate that decides
 for every question type except `act`/`tool`. -/
@@ -102,6 +105,11 @@ metrics — not a production gating policy; see module docstring). A hard
 answer is given iff the top probability reaches (1 + 1/K)/2; with `conf`
 a percentage and K options, `2·K·conf ≥ 100·(K+1)`. -/
 def isHard (K : Nat) (conf : Pct) : Prop := 2 * K * conf ≥ 100 * (K + 1)
+
+/-- Decidability of `isHard`, so the conformance export can `decide` on
+the DEFINITION (not a duplicated formula). -/
+instance isHard_decidable (K : Nat) (c : Pct) : Decidable (isHard K c) :=
+  inferInstanceAs (Decidable (2 * K * c ≥ 100 * (K + 1)))
 
 /-- Pinning the boundary for binary questions: hard answer iff
 confidence ≥ 75%. -/

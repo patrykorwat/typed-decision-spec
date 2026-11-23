@@ -17,8 +17,9 @@ namespace TypedDecision
 
 /-- Probability of one option, integer percentage. Bounded and
 normalized on `Response` (a `Fin 101` bound on a single entry would
-still leave the distribution unnormalized). -/
-@[reducible] def Pct := Nat
+still leave the distribution unnormalized). `abbrev` (not `def`): the
+elaborator sees through it, so `omega` works on Pct-typed terms. -/
+abbrev Pct := Nat
 
 /-- Sum of a list is at most its length times the list's maximum. -/
 theorem sum_le_top : ∀ (ps : List Nat) (c : Nat),
