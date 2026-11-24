@@ -41,13 +41,26 @@ marginals do not determine a joint distribution; labels are UNIQUE
 (`labels_nodup`), `multiSet` indexes with `Fin` (no phantom labels), and
 `gateMulti` returns a `MultiDecisionResult` that keeps the label–decision
 mapping — proved length agreement, whole-collection deferral below the
-threshold, and update locality).
+threshold, and update locality). A multi question has **at least one
+label** (`labels_nonempty`) — the empty collection is not a question,
+and it keeps `Fin m.labels.length` inhabited.
 
 For `score`, `act` and `tool` the semantics genuinely differ (expected value
 on a scale; expected-cost actions; agent next-step). A typed
 `ResponseFor : QType → Type` remains the target; until then this contract makes
 no claim about those three types' payload semantics (their deferral
 semantics ARE covered by `Conforming` for every `QType`).
+
+## Proof audit (v1.4.2)
+
+All 25 declarations of the library (`Basic`, `Defer`, `Loop`, `QTypes`)
+were checked with `#print axioms`: every dependency set is a subset of
+`[propext, Quot.sound, Classical.choice]` — **no `sorryAx`, no new
+axioms**. Zero `sorry`/`admit` in any module. Full `lake build` PASS;
+full conformance suite (16 tests, INCLUDING the Lean export — no
+`--fast`) passes with exit 0; both CI jobs green. Scope boundary: the
+formal claims are the ones named in this README; conformance tests
+mirror them in Python and are differential (frozen == Lean == Python).
 
 ## Three thresholds, kept apart
 
