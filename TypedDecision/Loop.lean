@@ -90,6 +90,18 @@ theorem binProbs_sum (p : Nat) (hp : p ≤ 100) : [p, 100 - p].sum = 100 := by
   simp only [List.sum_cons, List.sum_nil]
   omega
 
+/-- The binary distribution as a named export: `binProbsOf p hp = [p, 100-p]`.
+This is the shape the frozen vectors' `probs_trace` compares (the full
+per-loop distribution, not only the confidence). -/
+def binProbsOf (p : Nat) (hp : p ≤ 100) : List Pct := [p, 100 - p]
+
+/-- The exported distribution is a length-2 list summing to 100. -/
+theorem binProbsOf_sound (p : Nat) (hp : p ≤ 100) :
+    (binProbsOf p hp).length = 2 ∧ (binProbsOf p hp).sum = 100 := by
+  constructor
+  · simp [binProbsOf]
+  · exact binProbs_sum p hp
+
 /-- A binary response from one probability p (≤ 100): probs [p, 100-p],
 conf = max p (100-p), argmax = 0 iff p ≥ 50. Constructed so every
 `Response` invariant holds from `hp : p ≤ 100` alone. `p` is `Nat`
@@ -118,6 +130,11 @@ def binConfOf (p : Nat) (hp : p ≤ 100) : Pct := (binResponseOf p hp).conf
 
 /-- The confidence IS max p (100-p), by projection of the structure. -/
 theorem binConfOf_eq (p : Nat) (hp : p ≤ 100) : binConfOf p hp = max p (100 - p) := rfl
+
+/-- The constructed response's distribution IS the standalone export
+(the trace and the Response contract agree by construction). -/
+theorem binResponseOf_probs (p : Nat) (hp : p ≤ 100) :
+    (binResponseOf p hp).probs = binProbsOf p hp := rfl
 
 /-- A binary response from loop t's state: the per-loop readout produces
 p, the response is CONSTRUCTED from it (the trace confidence and the
@@ -166,6 +183,25 @@ theorem binConf_sound (p : Nat) (hp : p ≤ 100) :
     50 ≤ binConfOf p hp ∧ binConfOf p hp ≤ 100 := by
   rw [binConfOf_eq]
   exact ⟨max_sub_ge p hp, Nat.max_le.mpr ⟨hp, by omega⟩⟩
+
+/-- Direct soundness of the trace confidence (review P2): for every loop
+`t`, `binConf` sits in [50, 100] — no separate proof needed per consumer,
+it is `binConfOf_sound` at the loop's own readout. -/
+theorem binConf_loop_sound (r : Readout) (F : Nat → Nat) (h0 : Nat) (t : Nat) :
+    50 ≤ binConf r F h0 t ∧ binConf r F h0 t ≤ 100 :=
+  binConf_sound (r.f t (iter F t h0)) (r.bounded t (iter F t h0))
+
+/-- Analogous bound for the elements of `runBin` (review P2): budget t's
+confidence — at its exact index t-1 — is a valid confidence. -/
+theorem runBin_sound (F : Nat → Nat) (r : Readout) (h0 T : Nat) :
+    ∀ i < T, 50 ≤ (runBin F r h0 T)[i]! ∧ (runBin F r h0 T)[i]! ≤ 100 := by
+  intro i hi
+  have hb := budget_at F r h0 T i hi
+  have hv : (runBin F r h0 T)[i]! = binConf r F h0 (i + 1) := by
+    rw [List.getElem!_eq_getElem?_getD, hb]
+    simp
+  rw [hv]
+  exact binConf_loop_sound r F h0 (i + 1)
 
 /-- The WRONG engine: re-injects the token encoding at every loop
 (hₜ₊₁ = F hₜ + tokens). A different model; from the outside — typed
