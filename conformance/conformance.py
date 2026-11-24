@@ -345,6 +345,18 @@ def test_loop_response_binding() -> None:
         calibD, "choice", 3, V["conf_trace"][2]
     ), "gateLoop must agree with gateCalib at honest call sites"
 
+    # MUTATION TEST: a gate that ignores the loop index must FAIL this suite
+    # (this is exactly the bug class wrong_loop_structural rules out).
+    def gate_loop_ignoring_index(calib, lr):
+        if calib is None:
+            return "none"
+        return _gate_p(calib["tau"], lr["conf"])  # lr.loopIdx never consulted
+
+    assert gate_loop_ignoring_index(calibD, lr8) == "argmax", (
+        "test setup: the index-ignoring mutation MUST be detectable — "
+        "if this assert fails, the wrong-loop case no longer isolates the bug"
+    )
+
 
 def test_reference_matches_frozen_trace() -> None:
     ref = ReferenceEngine(V["state"])

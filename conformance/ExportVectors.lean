@@ -90,9 +90,10 @@ def main (args : List String) : IO UInt32 := do
     let gc6 := decStr (gateCalib calibD QType.choice 8 resp8)
     let gcCases := toString (List.map (fun s => "\"" ++ s ++ "\"") [gc1, gc2, gc3, gc4, gc5, gc6])
     -- the LoopResponse case: the index comes from the RESPONSE (loop 8),
-    -- so the loop-3 calibration cannot decide — wrong_loop_structural
+    -- and the threshold is the index-ISOLATING one (conf8 - 1): a gateLoop
+    -- that ignored lr.loopIdx would return argmax here — wrong_loop_structural
     let lr8 : LoopResponse := binLoopResponse read F H0 8 QType.choice
-    let lrCase := decStr (gateLoop calib3 lr8)
+    let lrCase := decStr (gateLoop calibD lr8)
     -- List String toString drops the quotes; re-add them for valid JSON
     let gatesQ := toString (gates.map (fun s => "\"" ++ s ++ "\""))
     let j := "{\"conf_trace\": " ++ toString trace
