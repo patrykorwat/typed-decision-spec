@@ -34,10 +34,13 @@ The current `Response` (single argmax over declared options, normalized
 distribution) is normative for **`choice`** and — as of `TypedDecision/QTypes.lean`
 — **`noul`** (the `BinaryResponse` witness: exactly two declared options;
 `tieBinary` shows the no-decision boundary is a well-formed state) and
-**`multi`** (the `MultiResponse` witness: a LIST of independent binary
-decisions, one per label; `multi_set_independent` is the formal content
-of independence — updating one label constrains no other, and the
-object is NOT a joint distribution over the power set).
+**`multi`** (the `MultiResponse` witness: a list of **independent
+per-label decisions with update locality** — `multi_set_independent`
+proves the structural half; the statistical half is carried by the
+per-label `BinaryResponse` objects, not one joint distribution; labels
+are UNIQUE (`labels_nodup`), and `gateMulti` lifts the shared gate over
+the collection with proved length agreement, whole-collection deferral
+below the threshold, and update locality).
 
 For `score`, `act` and `tool` the semantics genuinely differ (expected value
 on a scale; expected-cost actions; agent next-step). A typed
