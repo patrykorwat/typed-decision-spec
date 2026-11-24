@@ -100,18 +100,20 @@ def main (args : List String) : IO UInt32 := do
     -- the MULTI collection: 3 labels with DIFFERENT per-label distributions
     -- (label i's decision is noulResponseOf at the loop-(i+1) readout —
     -- confs 68/84/64 at loops 1/2/3 ⇒ mixed gating at τ₀: none/argmax/none)
+    let mk (da db dc : BinaryResponse) : MultiResponse :=
+      { labels := ["alpha", "beta", "gamma"], decisions := [da, db, dc],
+        len_match := rfl, labels_nodup := by decide, labels_nonempty := by decide }
     let d1 := noulResponseOf (rd 1 (iter F 1 H0)) (hmod _)
     let d2 := noulResponseOf (rd 2 (iter F 2 H0)) (hmod _)
     let d3 := noulResponseOf (rd 3 (iter F 3 H0)) (hmod _)
-    let m0 : MultiResponse :=
-      { labels := ["alpha", "beta", "gamma"], decisions := [d1, d2, d3],
-        len_match := rfl, labels_nodup := by decide, labels_nonempty := by decide }
+    let m0 := mk d1 d2 d3
     -- update label 2 (index 1) with the loop-4 readout: others unchanged
-    -- (mirror of multiSet m0 d4 ⟨1, _⟩ — the literal keeps Fin decidable)
+    -- (the CANONICAL constructor multiSet; the index proof: the labels of
+    -- the collection ARE the literal list, `decide` closes 1 < 3)
     let d4 := noulResponseOf (rd 4 (iter F 4 H0)) (hmod _)
-    let mU : MultiResponse :=
-      { labels := ["alpha", "beta", "gamma"], decisions := [d1, d4, d3],
-        len_match := rfl, labels_nodup := by decide, labels_nonempty := by decide }
+    let mU := multiSet m0 d4 ⟨1, by
+      have h : (mk d1 d2 d3).labels = ["alpha", "beta", "gamma"] := rfl
+      rw [h]; decide⟩
     let mConfs := (m0.decisions.map (fun d => d.response.conf)).toString
     let mProbs := (m0.decisions.map (fun d => d.response.probs)).toString
     let mGates := ((gateMulti TAU m0).decisions.map

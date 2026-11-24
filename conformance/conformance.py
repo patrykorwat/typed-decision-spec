@@ -392,7 +392,9 @@ def test_multi_golden() -> None:
 def test_multi_update_locality() -> None:
     """Updating label 2 (index 1) with the loop-4 readout changes ONLY
     position 2 — positions 1 and 3 keep their gated outcomes (the Python
-    mirror of gateMulti_set_independent / multi_set_independent)."""
+    mirror of gateMulti_set_independent / multi_set_independent). The
+    expected result is computed INDEPENDENTLY from the engine: the update
+    is the loop-4 readout gated at the calibration threshold."""
     before = V["multi_gate_tau"]
     after = V["multi_gate_tau_updated"]
     labels_u = V["multi_labels_updated"]
@@ -401,12 +403,25 @@ def test_multi_update_locality() -> None:
     assert after[0] == before[0] and after[2] == before[2], (
         "positions 1 and 3 must be unchanged by the label-2 update"
     )
-    # the update is VISIBLE at position 2 (the test would be vacuous otherwise)
-    assert before[1] != after[1] or before == after, (
-        "position 2 must reflect the updated decision"
+    # the update is VISIBLE at position 2 — not a no-op
+    assert before[1] != after[1], (
+        "position 2 must CHANGE under the label-2 update (loop-4 readout)"
     )
-    # the updated label-2 confidence is the loop-4 readout's confidence
+    # INDEPENDENT expectation: before.copy with position 2 = gate at the
+    # loop-4 readout's confidence
     ref = ReferenceEngine(V["state"])
+    expected = before.copy()
+    expected[1] = _gate_p(CALIBRATION_THRESHOLD, ref.conf_at(4))
+    assert after == expected, (
+        f"after != independently computed: {after} != {expected}"
+    )
+    # and the expected value genuinely differs from `before` at position 2
+    # (loop-4 conf 72 < tau=75 => none, vs before's argmax) — the data is
+    # discriminating
+    assert _gate_p(CALIBRATION_THRESHOLD, ref.conf_at(4)) != before[1], (
+        "test setup: the loop-4 readout must gate DIFFERENTLY than label 2's original"
+    )
+    # the updated label-2 confidence is the loop-2 readout's (before update)
     assert V["multi_conf_trace"][1] == ref.conf_at(2), (
         "label 2's original conf must be the loop-2 readout"
     )
@@ -414,6 +429,11 @@ def test_multi_update_locality() -> None:
     mirrored_confs = [ref.conf_at(i + 1) for i in range(3)]
     assert mirrored_confs == V["multi_conf_trace"], (
         "Python per-label confs != frozen"
+    )
+    # full per-label distributions get their independent check too
+    mirrored_probs = [ref.probs_at(i + 1) for i in range(3)]
+    assert mirrored_probs == V["multi_probs_trace"], (
+        "Python per-label probs != frozen"
     )
 
 
