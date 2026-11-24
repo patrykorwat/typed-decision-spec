@@ -1,6 +1,6 @@
 {
-  "spec": "typed-decision-spec v1.2",
-  "note": "derived from the spec definitions, frozen; never from an engine",
+  "spec": "typed-decision-spec v1.3",
+  "note": "derived from the spec definitions via ExportVectors.lean (Lean = source of truth), frozen; never from an engine",
   "pin": {
     "A": 1103515245,
     "B": 12345,
@@ -76,7 +76,17 @@
     "argmax",
     "none"
   ],
-  "reinjected_conf_trace": [
+  "vectors_sha256": "9c58b578e4cccf59686230a292d56ba4a949c6a88de7d41b6a6c4648c0971a63",
+  "gate_calib_cases": [
+    "none",
+    "none",
+    "none",
+    "none",
+    "argmax",
+    "none"
+  ],
+  "loop_response_wrong_loop": "none",
+  "reinjected_raw_trace": [
     32,
     44,
     36,
@@ -85,13 +95,5 @@
     52,
     24,
     16
-  ],
-  "vectors_sha256": "8ccb4e52b153c803c358fc20fb378e38d834862b814e71bb439ab514fcacbf37",
-  "gate_calib_cases": [
-    "none",
-    "none",
-    "none",
-    "none"
-  ],
-  "loop_response_wrong_loop": "none"
+  ]
 }

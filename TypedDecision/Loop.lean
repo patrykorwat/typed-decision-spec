@@ -264,10 +264,26 @@ structure LoopResponse where
   loopIdx : Nat
   response : Response
 
-/-- Construct the bound response for loop t from the per-loop readout. -/
+/-- Construct the bound response for loop t from the per-loop readout.
+This is the CANONICAL constructor: `binLoopResponse_loopIdx` and
+`binLoopResponse_response` pin that the stored index is the true loop
+of the stored response. (The raw `LoopResponse.mk` remains public, so a
+caller CAN still mislabel — provenance is guaranteed on this path, not
+type-theoretically; a private ctor / index-typed structure would be the
+full-strength version.) -/
 def binLoopResponse (r : Readout) (F : Nat → Nat) (h0 : Nat) (t : Nat) (q : QType) :
     LoopResponse :=
   ⟨q, t, binResponse r F h0 t⟩
+
+/-- Provenance of the canonical path, part 1: the stored index IS the
+construction loop. -/
+theorem binLoopResponse_loopIdx (r : Readout) (F : Nat → Nat) (h0 : Nat) (t : Nat)
+    (q : QType) : (binLoopResponse r F h0 t q).loopIdx = t := rfl
+
+/-- Provenance of the canonical path, part 2: the stored response IS the
+loop's own constructed response. -/
+theorem binLoopResponse_response (r : Readout) (F : Nat → Nat) (h0 : Nat) (t : Nat)
+    (q : QType) : (binLoopResponse r F h0 t q).response = binResponse r F h0 t := rfl
 
 /-- The structure-bound gate: the index is read from the response, not
 from a separate caller argument. -/

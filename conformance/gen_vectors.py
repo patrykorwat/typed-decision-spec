@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Derive and freeze the Tier-1 vectors (run once; output is sha256-pinned).
 
+HISTORICAL (v1.2): as of v1.3 the frozen vectors are generated FROM the
+Lean export (conformance/ExportVectors.lean — Lean is the source of
+truth, closing the "generator implements its own math" gap). This script
+remains as the record of how the original pin was produced.
+
 Spec math — mirrors TypedDecision/{Loop,Defer}.lean (v1.2):
   encode(text) = int(sha256(text)[:8], 16) % 2**31        # tokens encoded ONCE
   step(h)      = (A*h + B) % M                            # one stack pass

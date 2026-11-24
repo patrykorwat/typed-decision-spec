@@ -62,18 +62,33 @@ def main (args : List String) : IO UInt32 := do
     -- readout — the trace and the export cannot disagree)
     let probs := (List.range spec_T).map
       (fun i => (binResponse read F H0 (i + 1)).probs)
-    -- the calibration used in the exported cases: choice-type, fitted at
-    -- loop 3, threshold TAU (clamped to 100 for the certificate)
-    let tau := min TAU 100
-    have hcert : tau ≤ 100 := Nat.min_le_right TAU 100
-    let calib3 : Calib := ⟨QType.choice, tau, 3, hcert⟩
+    -- the exported calibration cases. τ₀ = the pin's calibration
+    -- threshold; τ₁ = τ₀ - 1; τ₂ = conf(8) - 1. calib₃ (loop 3) covers
+    -- applicability; calib₅ (loop 5) and calib_d (loop 3) cover the
+    -- DECIDING path and the wrong-loop regression at a threshold that
+    -- would decide were the index ignored.
+    let tau0 := min TAU 100
+    have hcert0 : tau0 ≤ 100 := Nat.min_le_right TAU 100
+    let tau1 := min (TAU - 1) 100
+    have hcert1 : tau1 ≤ 100 := Nat.min_le_right (TAU - 1) 100
+    let conf8 := binConf read F H0 8
+    let tau2 := min (conf8 - 1) 100
+    have hcert2 : tau2 ≤ 100 := Nat.min_le_right (conf8 - 1) 100
+    let calib3 : Calib := ⟨QType.choice, tau0, 3, hcert0⟩
+    let calib5 : Calib := ⟨QType.choice, tau1, 5, hcert1⟩
+    let calibD : Calib := ⟨QType.choice, tau2, 3, hcert2⟩
     let resp3 := binResponse read F H0 3
+    let resp5 := binResponse read F H0 5
     let resp8 := binResponse read F H0 8
+    -- cases: [own-loop per τ₀, wrong loop per τ₀, wrong QType, no calib,
+    --         own-loop DECIDING (τ₁ at loop 5), wrong loop, τ₂ WOULD decide]
     let gc1 := decStr (gateCalib calib3 QType.choice 3 resp3)
     let gc2 := decStr (gateCalib calib3 QType.choice 8 resp8)
     let gc3 := decStr (gateCalib calib3 QType.act 3 resp3)
     let gc4 := decStr (gateOptCalib none QType.choice 3 resp3)
-    let gcCases := toString (List.map (fun s => "\"" ++ s ++ "\"") [gc1, gc2, gc3, gc4])
+    let gc5 := decStr (gateCalib calib5 QType.choice 5 resp5)
+    let gc6 := decStr (gateCalib calibD QType.choice 8 resp8)
+    let gcCases := toString (List.map (fun s => "\"" ++ s ++ "\"") [gc1, gc2, gc3, gc4, gc5, gc6])
     -- the LoopResponse case: the index comes from the RESPONSE (loop 8),
     -- so the loop-3 calibration cannot decide — wrong_loop_structural
     let lr8 : LoopResponse := binLoopResponse read F H0 8 QType.choice
@@ -81,7 +96,7 @@ def main (args : List String) : IO UInt32 := do
     -- List String toString drops the quotes; re-add them for valid JSON
     let gatesQ := toString (gates.map (fun s => "\"" ++ s ++ "\""))
     let j := "{\"conf_trace\": " ++ toString trace
-      ++ ", \"reinjected_conf_trace\": " ++ toString reinj
+      ++ ", \"reinjected_raw_trace\": " ++ toString reinj
       ++ ", \"is_hard_K2\": " ++ toString hard
       ++ ", \"gate_tau\": " ++ gatesQ
       ++ ", \"probs_trace\": " ++ toString probs

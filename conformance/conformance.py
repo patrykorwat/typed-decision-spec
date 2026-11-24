@@ -123,6 +123,13 @@ class ReferenceEngine:
         `reinjectedRun` maps, so raw-vs-raw comparisons are honest."""
         return _read(t, self._h(t))
 
+    def probs_at(self, t: int) -> list:
+        """The full binary distribution at loop t, from THIS engine's own
+        raw readout — the independent Python mirror of the exported
+        `probs_trace` (binProbsOf at the loop's own readout)."""
+        p = self.raw_at(t)
+        return [p, 100 - p]
+
     def conf_at(self, t: int) -> int:
         return max(_read(t, self._h(t)), 100 - _read(t, self._h(t)))
 
@@ -196,7 +203,7 @@ def test_vector_integrity() -> None:
     assert V["h0"] == encode_once(V["state"]), "h0 must be encode-once of the state"
     assert PIN["T"] == SPEC_T, "frozen budget must equal the pinned spec_T"
     for key in ("conf_trace", "probs_trace", "gate_tau75", "is_hard_K2",
-                "reinjected_conf_trace"):
+                "reinjected_raw_trace"):
         assert len(V[key]) == SPEC_T, f"{key} aligned with budgets 1..T"
     # every trace entry is the confidence of a constructed binary response
     for probs, conf in zip(V["probs_trace"], V["conf_trace"]):
@@ -212,18 +219,30 @@ def test_encode_matches_frozen() -> None:
 
 
 def _gate_calib_cases() -> list:
-    """The Python mirror of the four exported gateCalib cases, computed
-    from the pin and the frozen conf trace (calibration: choice, loop 3,
-    tau = the pin's calibration threshold)."""
-    tau = CALIBRATION_THRESHOLD
-    calib3 = {"qtype": "choice", "loopIdx": 3, "tau": tau}
-    conf3 = V["conf_trace"][2]
+    """The Python mirror of the six exported gateCalib cases, computed
+    from the pin and the frozen conf trace:
+      1. calib(loop 3, τ₀) @ loop 3   — applicable, below τ₀
+      2. calib(loop 3, τ₀) @ loop 8   — wrong loop
+      3. calib(loop 3, τ₀) @ act 3    — wrong question type
+      4. none        @ loop 3         — no calibration record
+      5. calib(loop 5, τ₀-1) @ loop 5 — applicable, ABOVE τ₀-1: DECIDES
+      6. calib(loop 3, conf8-1) @ loop 8 — wrong loop, τ WOULD decide
+    """
+    tau0 = CALIBRATION_THRESHOLD
+    tau1 = tau0 - 1
     conf8 = V["conf_trace"][SPEC_T - 1]
+    calib3 = {"qtype": "choice", "loopIdx": 3, "tau": tau0}
+    calib5 = {"qtype": "choice", "loopIdx": 5, "tau": tau1}
+    calibD = {"qtype": "choice", "loopIdx": 3, "tau": conf8 - 1}
+    conf3 = V["conf_trace"][2]
+    conf5 = V["conf_trace"][4]
     return [
         gate_calib(calib3, "choice", 3, conf3),   # own loop, per threshold
         gate_calib(calib3, "choice", 8, conf8),   # wrong loop
         gate_calib(calib3, "act", 3, conf3),      # wrong question type
         "none",                                   # no calibration at all
+        gate_calib(calib5, "choice", 5, conf5),   # own loop, DECIDING
+        gate_calib(calibD, "choice", 8, conf8),   # wrong loop, τ would decide
     ]
 
 
@@ -232,8 +251,8 @@ def test_lean_export_matches_frozen() -> None:
     — including the full distributions and the calibration cases."""
     lean = lean_export()
     assert lean["conf_trace"] == V["conf_trace"], "Lean trace != frozen trace"
-    assert lean["reinjected_conf_trace"] == V["reinjected_conf_trace"], (
-        "Lean reinjected trace != frozen"
+    assert lean["reinjected_raw_trace"] == V["reinjected_raw_trace"], (
+        "Lean reinjected (raw) trace != frozen"
     )
     assert lean["is_hard_K2"] == V["is_hard_K2"], "Lean isHard != frozen"
     assert lean["gate_tau"] == V["gate_tau75"], "Lean gate != frozen gate"
@@ -250,8 +269,15 @@ def test_lean_export_matches_frozen() -> None:
 
 
 def test_probs_trace_three_way() -> None:
-    """Python mirror: every loop's conf IS max(probs) of the constructed
-    response — the same invariant binResponseOf_probs proves in Lean."""
+    """Three independent computations of the distributions must agree:
+    Python computes them from ITS OWN readout (not from the frozen file),
+    Lean from the constructed Response, and the frozen vectors carry the
+    pin. conf == max(probs) closes the Response contract on all layers."""
+    ref = ReferenceEngine(V["state"])
+    got = [ref.probs_at(t) for t in range(1, SPEC_T + 1)]
+    assert got == V["probs_trace"], (
+        f"Python probs != frozen: {got} != {V['probs_trace']}"
+    )
     for probs, conf in zip(V["probs_trace"], V["conf_trace"]):
         assert len(probs) == 2 and sum(probs) == 100
         assert conf == max(probs), "frozen: conf != max(probs)"
@@ -264,13 +290,16 @@ def test_gate_calib_three_way() -> None:
         "Python gateCalib cases != frozen"
     )
     # per-case semantics, independent of the frozen file:
-    tau = CALIBRATION_THRESHOLD
-    calib3 = {"qtype": "choice", "loopIdx": 3, "tau": tau}
+    tau0 = CALIBRATION_THRESHOLD
+    tau1 = tau0 - 1
+    calib3 = {"qtype": "choice", "loopIdx": 3, "tau": tau0}
+    calib5 = {"qtype": "choice", "loopIdx": 5, "tau": tau1}
     conf3 = V["conf_trace"][2]
+    conf5 = V["conf_trace"][4]
     conf8 = V["conf_trace"][SPEC_T - 1]
     # own loop: the threshold rule decides (below tau here -> none)
     assert gate_calib(calib3, "choice", 3, conf3) == (
-        "argmax" if tau <= conf3 else "none"
+        "argmax" if tau0 <= conf3 else "none"
     )
     # wrong loop: the calibration does not apply, regardless of threshold
     # (twin of wrong_loop_never_decides — holds for ANY tau)
@@ -279,22 +308,41 @@ def test_gate_calib_three_way() -> None:
     assert gate_calib(calib3, "noul", 3, 100) == "none"
     # no calibration record: no decision (twin of no_calib_never_decides)
     assert gate_calib(None, "choice", 3, 100) == "none"
+    # POSITIVE path: own loop at tau0-1 with conf5 above it — the full
+    # gateCalib chain (applicability AND threshold) produces a decision
+    assert tau1 < conf5, "test setup: tau1 must decide at loop 5"
+    assert gate_calib(calib5, "choice", 5, conf5) == "argmax"
+    # WRONG-LOOP REGRESSION with an index-isolating threshold: tau2 =
+    # conf8 - 1 WOULD decide at loop 8 were the index ignored; the
+    # correct implementation returns none (mirror of wrong_loop_structural)
+    calibD = {"qtype": "choice", "loopIdx": 3, "tau": conf8 - 1}
+    assert _gate_p(conf8 - 1, conf8) == "argmax", (
+        "test setup: tau2 must decide at loop 8 absent the index check"
+    )
+    assert gate_calib(calibD, "choice", 8, conf8) == "none", (
+        "wrong loop must defer even when the threshold would decide"
+    )
 
 
 def test_loop_response_binding() -> None:
     """The LoopResponse mirror: the index travels with the response, so a
     loop-3 calibration cannot decide on a loop-8 response — the structural
-    twin of wrong_loop_structural, compared with the Lean export too."""
-    tau = CALIBRATION_THRESHOLD
-    calib3 = {"qtype": "choice", "loopIdx": 3, "tau": tau}
+    twin of wrong_loop_structural, compared with the Lean export too.
+    The threshold here (conf8 - 1) WOULD decide at loop 8, isolating the
+    index check: a gateLoop that ignored lr.loopIdx would return argmax."""
+    tau2 = V["conf_trace"][SPEC_T - 1] - 1
+    calibD = {"qtype": "choice", "loopIdx": 3, "tau": tau2}
     lr8 = {"qtype": "choice", "loopIdx": 8, "conf": V["conf_trace"][SPEC_T - 1]}
-    assert gate_loop(calib3, lr8) == "none", (
-        "gateLoop must read the index from the response: loop 3 calib vs loop 8 response"
+    assert _gate_p(tau2, lr8["conf"]) == "argmax", (
+        "test setup: the threshold would decide at loop 8 absent the index"
+    )
+    assert gate_loop(calibD, lr8) == "none", (
+        "gateLoop must read the index from the response: loop-3 calib vs loop-8 response"
     )
     # honest call site: gateLoop == gateCalib (twin of gateLoop_eq_gateCalib)
     lr3 = {"qtype": "choice", "loopIdx": 3, "conf": V["conf_trace"][2]}
-    assert gate_loop(calib3, lr3) == gate_calib(
-        calib3, "choice", 3, V["conf_trace"][2]
+    assert gate_loop(calibD, lr3) == gate_calib(
+        calibD, "choice", 3, V["conf_trace"][2]
     ), "gateLoop must agree with gateCalib at honest call sites"
 
 
@@ -339,7 +387,7 @@ def test_reinjected_engine_fails_suite() -> None:
     ref = ReferenceEngine(V["state"])
     got_raw = [eng.raw_at(t) for t in range(1, SPEC_T + 1)]
     ref_raw = [ref.raw_at(t) for t in range(1, SPEC_T + 1)]
-    assert got_raw == V["reinjected_conf_trace"], (
+    assert got_raw == V["reinjected_raw_trace"], (
         "reinjected engine must match its own frozen (raw) trace"
     )
     assert got_raw != ref_raw, "raw-vs-raw: reinjection was NOT detected"
