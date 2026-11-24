@@ -1,4 +1,7 @@
 import TypedDecision.Loop
+import TypedDecision.QTypes
+
+open TypedDecision QTypes
 
 /-!
 # Executable conformance export (the formal half of the bridge)
@@ -94,8 +97,31 @@ def main (args : List String) : IO UInt32 := do
     -- that ignored lr.loopIdx would return argmax here — wrong_loop_structural
     let lr8 : LoopResponse := binLoopResponse read F H0 8 QType.choice
     let lrCase := decStr (gateLoop calibD lr8)
+    -- the MULTI collection: 3 labels with DIFFERENT per-label distributions
+    -- (label i's decision is noulResponseOf at the loop-(i+1) readout —
+    -- confs 68/84/64 at loops 1/2/3 ⇒ mixed gating at τ₀: none/argmax/none)
+    let d1 := noulResponseOf (rd 1 (iter F 1 H0)) (hmod _)
+    let d2 := noulResponseOf (rd 2 (iter F 2 H0)) (hmod _)
+    let d3 := noulResponseOf (rd 3 (iter F 3 H0)) (hmod _)
+    let m0 : MultiResponse :=
+      { labels := ["alpha", "beta", "gamma"], decisions := [d1, d2, d3],
+        len_match := rfl, labels_nodup := by decide, labels_nonempty := by decide }
+    -- update label 2 (index 1) with the loop-4 readout: others unchanged
+    -- (mirror of multiSet m0 d4 ⟨1, _⟩ — the literal keeps Fin decidable)
+    let d4 := noulResponseOf (rd 4 (iter F 4 H0)) (hmod _)
+    let mU : MultiResponse :=
+      { labels := ["alpha", "beta", "gamma"], decisions := [d1, d4, d3],
+        len_match := rfl, labels_nodup := by decide, labels_nonempty := by decide }
+    let mConfs := (m0.decisions.map (fun d => d.response.conf)).toString
+    let mProbs := (m0.decisions.map (fun d => d.response.probs)).toString
+    let mGates := ((gateMulti TAU m0).decisions.map
+      (fun d => match d with | some _ => "\"argmax\"" | none => "\"none\"")).toString
+    let mGatesU := ((gateMulti TAU mU).decisions.map
+      (fun d => match d with | some _ => "\"argmax\"" | none => "\"none\"")).toString
+    let mLabelsU := (["alpha", "beta", "gamma"].map (fun s => "\"" ++ s ++ "\"")).toString
     -- List String toString drops the quotes; re-add them for valid JSON
     let gatesQ := toString (gates.map (fun s => "\"" ++ s ++ "\""))
+    let labelsQ := toString (["alpha", "beta", "gamma"].map (fun s => "\"" ++ s ++ "\""))
     let j := "{\"conf_trace\": " ++ toString trace
       ++ ", \"reinjected_raw_trace\": " ++ toString reinj
       ++ ", \"is_hard_K2\": " ++ toString hard
@@ -103,6 +129,12 @@ def main (args : List String) : IO UInt32 := do
       ++ ", \"probs_trace\": " ++ toString probs
       ++ ", \"gate_calib_cases\": " ++ gcCases
       ++ ", \"loop_response_wrong_loop\": \"" ++ lrCase ++ "\""
+      ++ ", \"multi_labels\": " ++ labelsQ
+      ++ ", \"multi_conf_trace\": " ++ mConfs
+      ++ ", \"multi_probs_trace\": " ++ mProbs
+      ++ ", \"multi_gate_tau\": " ++ mGates
+      ++ ", \"multi_gate_tau_updated\": " ++ mGatesU
+      ++ ", \"multi_labels_updated\": " ++ mLabelsU
       ++ "}"
     IO.println j
     return 0

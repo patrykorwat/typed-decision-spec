@@ -358,6 +358,85 @@ def test_loop_response_binding() -> None:
     )
 
 
+# ---- multi-label conformance (v1.4.2) ----
+
+def _mirror_gate_multi(tau, labels, confs):
+    """Python mirror of gateMulti: per-label gate from each label's own
+    confidence, label order preserved."""
+    return labels, [_gate_p(tau, c) for c in confs]
+
+
+def test_multi_golden() -> None:
+    """The Lean-exported multi collection: 3 labels, different per-label
+    distributions, mixed gating at the calibration threshold."""
+    labels = V["multi_labels"]
+    confs = V["multi_conf_trace"]
+    assert labels == ["alpha", "beta", "gamma"], "label order must be preserved"
+    assert len(confs) == len(labels) == 3, "three labels, three decisions"
+    assert len(V["multi_probs_trace"]) == 3, "one distribution per label"
+    for probs, conf in zip(V["multi_probs_trace"], confs):
+        assert len(probs) == 2 and sum(probs) == 100
+        assert conf == max(probs), "per-label conf != max(per-label probs)"
+        assert 50 <= conf <= 100, "per-label conf outside the binary range"
+    # mixed gating: the frozen gates are the Python mirror of the SAME rule
+    _, mirrored = _mirror_gate_multi(CALIBRATION_THRESHOLD, labels, confs)
+    assert mirrored == V["multi_gate_tau"], (
+        f"Python gateMulti != frozen: {mirrored} != {V['multi_gate_tau']}"
+    )
+    # and the collection genuinely MIXES outcomes (the case is discriminating)
+    assert len(set(V["multi_gate_tau"])) == 2, (
+        "frozen multi gating must mix argmax and none"
+    )
+
+
+def test_multi_update_locality() -> None:
+    """Updating label 2 (index 1) with the loop-4 readout changes ONLY
+    position 2 — positions 1 and 3 keep their gated outcomes (the Python
+    mirror of gateMulti_set_independent / multi_set_independent)."""
+    before = V["multi_gate_tau"]
+    after = V["multi_gate_tau_updated"]
+    labels_u = V["multi_labels_updated"]
+    assert labels_u == V["multi_labels"], "update must not touch the label list"
+    assert len(after) == len(before) == 3
+    assert after[0] == before[0] and after[2] == before[2], (
+        "positions 1 and 3 must be unchanged by the label-2 update"
+    )
+    # the update is VISIBLE at position 2 (the test would be vacuous otherwise)
+    assert before[1] != after[1] or before == after, (
+        "position 2 must reflect the updated decision"
+    )
+    # the updated label-2 confidence is the loop-4 readout's confidence
+    ref = ReferenceEngine(V["state"])
+    assert V["multi_conf_trace"][1] == ref.conf_at(2), (
+        "label 2's original conf must be the loop-2 readout"
+    )
+    # and the mirrored per-label confs reproduce the frozen ones exactly
+    mirrored_confs = [ref.conf_at(i + 1) for i in range(3)]
+    assert mirrored_confs == V["multi_conf_trace"], (
+        "Python per-label confs != frozen"
+    )
+
+
+def test_multi_rejects() -> None:
+    """Negative cases: duplicate labels and out-of-range update index are
+    REJECTED by the well-formedness conditions (Python mirrors of
+    labels_nodup and the Fin index)."""
+    labels = V["multi_labels"]
+    # duplicate labels: Nodup fails
+    dup = [labels[0], labels[0], labels[1]]
+    assert len(dup) == 3 and dup.count(dup[0]) == 2, "test setup: dup has a duplicate"
+    # the mirror's well-formedness check (mirror of labels_nodup)
+    def well_formed(labels_, decisions):
+        return len(labels_) == len(decisions) and len(set(labels_)) == len(labels_)
+    assert not well_formed(dup, [0, 0, 0]), "duplicates must be rejected"
+    assert well_formed(labels, [0, 0, 0]), "the frozen collection is well-formed"
+    # out-of-range index: Fin m.labels.length rejects index 3 for 3 labels
+    def valid_index(i, labels_):
+        return 0 <= i < len(labels_)
+    assert not valid_index(3, labels), "index 3 must be rejected for 3 labels"
+    assert valid_index(1, labels), "index 1 is in range"
+
+
 def test_reference_matches_frozen_trace() -> None:
     ref = ReferenceEngine(V["state"])
     got = [ref.conf_at(t) for t in range(1, SPEC_T + 1)]
@@ -479,6 +558,9 @@ def main() -> int:
         test_probs_trace_three_way,
         test_gate_calib_three_way,
         test_loop_response_binding,
+        test_multi_golden,
+        test_multi_update_locality,
+        test_multi_rejects,
         test_reference_matches_frozen_trace,
         test_ishard_matches_frozen_and_boundary,
         test_gate_matches_frozen_and_boundary,

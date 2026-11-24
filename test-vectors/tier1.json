@@ -76,7 +76,7 @@
     "argmax",
     "none"
   ],
-  "vectors_sha256": "9c58b578e4cccf59686230a292d56ba4a949c6a88de7d41b6a6c4648c0971a63",
+  "vectors_sha256": "7278f5eec1ee8630488b278b892dba311732f8349eea80c7a8f03448efc1e4a8",
   "gate_calib_cases": [
     "none",
     "none",
@@ -95,5 +95,44 @@
     52,
     24,
     16
+  ],
+  "multi_labels": [
+    "alpha",
+    "beta",
+    "gamma"
+  ],
+  "multi_conf_trace": [
+    68,
+    84,
+    64
+  ],
+  "multi_probs_trace": [
+    [
+      32,
+      68
+    ],
+    [
+      84,
+      16
+    ],
+    [
+      36,
+      64
+    ]
+  ],
+  "multi_gate_tau": [
+    "none",
+    "argmax",
+    "none"
+  ],
+  "multi_gate_tau_updated": [
+    "none",
+    "none",
+    "none"
+  ],
+  "multi_labels_updated": [
+    "alpha",
+    "beta",
+    "gamma"
   ]
 }

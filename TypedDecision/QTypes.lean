@@ -49,7 +49,8 @@ Each label carries its OWN **separate per-label binary distribution**
 NOT claim statistical independence, only separate per-label objects
 with update locality) — the multi response is NOT one distribution over
 the power set (which would be 2^k options and destroy the per-label
-reading). -/
+reading). A multi question has AT LEAST ONE label — the empty collection
+is not a question (and makes `Fin` vacuous). -/
 structure MultiResponse where
   labels : List String
   decisions : List BinaryResponse
@@ -57,6 +58,9 @@ structure MultiResponse where
   /-- Labels are unique — `["positive", "positive"]` is not a
   well-formed multi response (the per-label reading collapses). -/
   labels_nodup : labels.Nodup
+  /-- At least one label: a multi question with no labels is not a
+  question (and `Fin m.labels.length` would be vacuous). -/
+  labels_nonempty : labels ≠ []
 
 theorem resp50_le : ∀ j (_ : j < ([50, 50] : List Nat).length), [50, 50][j]! ≤ 50 := by
   intro j hj
@@ -76,6 +80,20 @@ theorem resp50_mem : ∀ p ∈ ([50, 50] : List Nat), p ≤ 100 := by
     · rcases List.mem_cons.mp h with h2 | h2
       · omega
       · exact absurd h2 (by simp)
+  omega
+
+/-- Every entry of the binary distribution `[p, 100 - p]` is ≤ 100. -/
+theorem respP_le (p : Nat) (hp : p ≤ 100) : ∀ x ∈ [p, 100 - p], x ≤ 100 := by
+  intro x hx
+  rcases List.mem_cons.mp hx with h | h
+  · omega
+  · rcases List.mem_cons.mp h with h2 | h2
+    · omega
+    · exact absurd h2 (by simp)
+
+/-- The binary distribution sums to 100. -/
+theorem respP_sum (p : Nat) (hp : p ≤ 100) : [p, 100 - p].sum = 100 := by
+  simp only [List.sum_cons, List.sum_nil]
   omega
 
 /-- The `noul` boundary: the 50/50 tie — a well-formed binary response
@@ -105,7 +123,42 @@ instance : Inhabited BinaryResponse where
 
 instance : Inhabited MultiResponse where
   default := { labels := ["l1"], decisions := [default], len_match := rfl,
-               labels_nodup := by simp }
+               labels_nodup := by simp, labels_nonempty := by simp }
+
+/-- The `noul` constructor from one probability `p ≤ 100`: declared
+YES/NO, probs `[p, 100-p]`, conf = max p (100-p), argmax = 0 iff p ≥ 50.
+Every shared `Response` invariant holds from `hp : p ≤ 100` alone — the
+binary contract is constructible for every valid readout (the Python
+adapter and the multi export build their label decisions from this). -/
+def noulResponseOf (p : Nat) (hp : p ≤ 100) : BinaryResponse :=
+  { response :=
+      { declared := ["YES", "NO"]
+        probs := [p, 100 - p]
+        argmax := if 50 ≤ p then 0 else 1
+        conf := max p (100 - p)
+        k_ge_2 := by decide
+        len_declared := rfl
+        conf_is_top := by
+          by_cases h50 : 50 ≤ p
+          · rw [if_pos h50]; exact Nat.max_eq_left (by omega)
+          · rw [if_neg (by omega)]; exact Nat.max_eq_right (by omega)
+        argmax_mem := by
+          by_cases h50 : 50 ≤ p
+          · rw [if_pos h50]; simp
+          · have hl : ["YES", "NO"].length = 2 := rfl
+            rw [if_neg (by omega), hl]; omega
+        argmax_is_max := by
+          intro j hj
+          have hl : [p, 100 - p].length = 2 := rfl
+          have hjn : j < 2 := by rw [hl] at hj; exact hj
+          have hj0 : j = 0 ∨ j = 1 := by omega
+          rcases hj0 with h | h
+          · subst h; exact Nat.le_max_left p (100 - p)
+          · subst h; exact Nat.le_max_right p (100 - p)
+        probs_le_100 := respP_le p hp
+        sum_100 := respP_sum p hp }
+    declared_len_2 := rfl
+    declared_pair := rfl }
 
 /-- **Update locality of labels** (the structural half of per-label
 independence): setting label i's decision leaves every OTHER label's
@@ -172,7 +225,7 @@ def multiSet (m : MultiResponse) (d : BinaryResponse) (i : Fin m.labels.length) 
     MultiResponse :=
   { labels := m.labels, decisions := m.decisions.set i.val d,
     len_match := by rw [List.length_set]; exact m.len_match,
-    labels_nodup := m.labels_nodup }
+    labels_nodup := m.labels_nodup, labels_nonempty := m.labels_nonempty }
 
 theorem multiSet_decisions (m : MultiResponse) (d : BinaryResponse) (i : Fin m.labels.length) :
     (multiSet m d i).decisions = m.decisions.set i.val d := rfl
