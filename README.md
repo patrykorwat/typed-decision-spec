@@ -31,12 +31,18 @@ it reads `spec_T` — so a frozen budget cannot drift silently.
 ## Question-type scope (normative vs. deferred)
 
 The current `Response` (single argmax over declared options, normalized
-distribution) is normative for **`choice`** and **`noul`**. For `score`,
-`multi`, `act` and `tool` the semantics genuinely differ (expected value
-on a scale; independent label probabilities where `sum = 100` is NOT the
-right invariant; expected-cost actions; agent next-step). A typed
-`ResponseFor : QType → Type` is planned; until then this contract makes
-no claim about those four types' payload semantics (their deferral
+distribution) is normative for **`choice`** and — as of `TypedDecision/QTypes.lean`
+— **`noul`** (the `BinaryResponse` witness: exactly two declared options;
+`tieBinary` shows the no-decision boundary is a well-formed state) and
+**`multi`** (the `MultiResponse` witness: a LIST of independent binary
+decisions, one per label; `multi_set_independent` is the formal content
+of independence — updating one label constrains no other, and the
+object is NOT a joint distribution over the power set).
+
+For `score`, `act` and `tool` the semantics genuinely differ (expected value
+on a scale; expected-cost actions; agent next-step). A typed
+`ResponseFor : QType → Type` remains the target; until then this contract makes
+no claim about those three types' payload semantics (their deferral
 semantics ARE covered by `Conforming` for every `QType`).
 
 ## Three thresholds, kept apart
