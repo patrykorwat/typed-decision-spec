@@ -9,6 +9,12 @@ Computes the Tier-1 expected values FROM the spec's definitions —
 pinned `spec_T` (a CLI T different from spec_T is REJECTED, so the
 frozen budget cannot drift silently).
 
+v1.3 additions (review round 9): the FULL response distributions
+(`probs_trace`, per loop, from the constructed `Response` — by
+`binResponseOf_probs` these ARE `binProbsOf`), the four exported
+`gateCalib` cases, the `gateOptCalib none` case, and the
+`LoopResponse` wrong-loop case (the index travels with the response).
+
 Usage (from the repo root):
   lake env lean --run conformance/ExportVectors.lean A B M W R H0 TAU
 
@@ -21,6 +27,11 @@ Prints one JSON object on stdout.
 open TypedDecision
 
 def parseNat (s : String) : Nat := s.toNat!
+
+/-- Serialize a `Decision` (`Option Nat`) the way the Python mirror
+speaks: `"argmax"` for `some _`, `"none"` for `none`. -/
+def decStr (d : Decision) : String :=
+  match d with | some _ => "argmax" | none => "none"
 
 def main (args : List String) : IO UInt32 := do
   match args with
@@ -46,12 +57,37 @@ def main (args : List String) : IO UInt32 := do
     -- gate predicate at TAU
     let hard := trace.map (fun c => decide (isHard 2 c))
     let gates := trace.map (fun c => if gateP TAU c then "argmax" else "none")
+    -- the FULL per-loop distributions, from the constructed Response
+    -- (by binResponseOf_probs these equal binProbsOf at the loop's own
+    -- readout — the trace and the export cannot disagree)
+    let probs := (List.range spec_T).map
+      (fun i => (binResponse read F H0 (i + 1)).probs)
+    -- the calibration used in the exported cases: choice-type, fitted at
+    -- loop 3, threshold TAU (clamped to 100 for the certificate)
+    let tau := min TAU 100
+    have hcert : tau ≤ 100 := Nat.min_le_right TAU 100
+    let calib3 : Calib := ⟨QType.choice, tau, 3, hcert⟩
+    let resp3 := binResponse read F H0 3
+    let resp8 := binResponse read F H0 8
+    let gc1 := decStr (gateCalib calib3 QType.choice 3 resp3)
+    let gc2 := decStr (gateCalib calib3 QType.choice 8 resp8)
+    let gc3 := decStr (gateCalib calib3 QType.act 3 resp3)
+    let gc4 := decStr (gateOptCalib none QType.choice 3 resp3)
+    let gcCases := toString (List.map (fun s => "\"" ++ s ++ "\"") [gc1, gc2, gc3, gc4])
+    -- the LoopResponse case: the index comes from the RESPONSE (loop 8),
+    -- so the loop-3 calibration cannot decide — wrong_loop_structural
+    let lr8 : LoopResponse := binLoopResponse read F H0 8 QType.choice
+    let lrCase := decStr (gateLoop calib3 lr8)
     -- List String toString drops the quotes; re-add them for valid JSON
     let gatesQ := toString (gates.map (fun s => "\"" ++ s ++ "\""))
     let j := "{\"conf_trace\": " ++ toString trace
       ++ ", \"reinjected_conf_trace\": " ++ toString reinj
       ++ ", \"is_hard_K2\": " ++ toString hard
-      ++ ", \"gate_tau\": " ++ gatesQ ++ "}"
+      ++ ", \"gate_tau\": " ++ gatesQ
+      ++ ", \"probs_trace\": " ++ toString probs
+      ++ ", \"gate_calib_cases\": " ++ gcCases
+      ++ ", \"loop_response_wrong_loop\": \"" ++ lrCase ++ "\""
+      ++ "}"
     IO.println j
     return 0
   | _ => do

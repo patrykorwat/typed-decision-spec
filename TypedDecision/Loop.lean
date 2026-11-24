@@ -253,4 +253,40 @@ theorem no_calib_never_decides (ty : QType) (t : Nat) (r : Response) :
     gateOptCalib none ty t r = none := by
   simp [gateOptCalib]
 
+/-! ## The response bound to its loop (review P1-4) -/
+
+/-- A response bound to its question type and loop index: the index
+travels WITH the response, so a gate can no longer be fed a response
+from loop 8 while the caller claims `t = 3` — the mismatch is visible
+in the value itself. -/
+structure LoopResponse where
+  qtype : QType
+  loopIdx : Nat
+  response : Response
+
+/-- Construct the bound response for loop t from the per-loop readout. -/
+def binLoopResponse (r : Readout) (F : Nat → Nat) (h0 : Nat) (t : Nat) (q : QType) :
+    LoopResponse :=
+  ⟨q, t, binResponse r F h0 t⟩
+
+/-- The structure-bound gate: the index is read from the response, not
+from a separate caller argument. -/
+def gateLoop (c : Calib) (lr : LoopResponse) : Decision :=
+  if c.qtype = lr.qtype ∧ c.loopIdx = lr.loopIdx then gate lr.qtype c.τ lr.response else none
+
+/-- Structural twin of `wrong_loop_never_decides`: a calibration cannot
+decide on a response whose OWN loop index differs. -/
+theorem wrong_loop_structural (c : Calib) (lr : LoopResponse)
+    (h : c.loopIdx ≠ lr.loopIdx) : gateLoop c lr = none := by
+  simp only [gateLoop]
+  exact if_neg (fun hc => h hc.2)
+
+/-- `gateLoop` agrees with `gateCalib` whenever the passed index IS the
+response's own index — the two APIs coincide at honest call sites. -/
+theorem gateLoop_eq_gateCalib (c : Calib) (lr : LoopResponse) :
+    gateLoop c lr = gateCalib c lr.qtype lr.loopIdx lr.response := by
+  by_cases h : c.qtype = lr.qtype ∧ c.loopIdx = lr.loopIdx
+  · rw [gateLoop, if_pos h, gateCalib, if_pos h]
+  · rw [gateLoop, if_neg h, gateCalib, if_neg h]
+
 end TypedDecision

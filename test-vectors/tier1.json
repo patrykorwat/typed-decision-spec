@@ -1,90 +1,97 @@
 {
- "spec": "typed-decision-spec v1.2",
- "note": "derived from the spec definitions, frozen; never from an engine",
- "pin": {
-  "A": 1103515245,
-  "B": 12345,
-  "M": 2147483648,
-  "W": 5,
-  "R": 7,
-  "T": 8,
-  "calibration_threshold": 75
- },
- "state": "Zgloszenie naprawy windy, wejscie serwerownia 3p.",
- "h0": 366159500,
- "conf_trace": [
-  68,
-  84,
-  64,
-  72,
-  80,
-  52,
-  96,
-  64
- ],
- "probs_trace": [
-  [
-   32,
-   68
+  "spec": "typed-decision-spec v1.2",
+  "note": "derived from the spec definitions, frozen; never from an engine",
+  "pin": {
+    "A": 1103515245,
+    "B": 12345,
+    "M": 2147483648,
+    "W": 5,
+    "R": 7,
+    "T": 8,
+    "calibration_threshold": 75
+  },
+  "state": "Zgloszenie naprawy windy, wejscie serwerownia 3p.",
+  "h0": 366159500,
+  "conf_trace": [
+    68,
+    84,
+    64,
+    72,
+    80,
+    52,
+    96,
+    64
   ],
-  [
-   84,
-   16
+  "probs_trace": [
+    [
+      32,
+      68
+    ],
+    [
+      84,
+      16
+    ],
+    [
+      36,
+      64
+    ],
+    [
+      28,
+      72
+    ],
+    [
+      20,
+      80
+    ],
+    [
+      52,
+      48
+    ],
+    [
+      4,
+      96
+    ],
+    [
+      36,
+      64
+    ]
   ],
-  [
-   36,
-   64
+  "is_hard_K2": [
+    false,
+    true,
+    false,
+    false,
+    true,
+    false,
+    true,
+    false
   ],
-  [
-   28,
-   72
+  "gate_tau75": [
+    "none",
+    "argmax",
+    "none",
+    "none",
+    "argmax",
+    "none",
+    "argmax",
+    "none"
   ],
-  [
-   20,
-   80
+  "reinjected_conf_trace": [
+    32,
+    44,
+    36,
+    68,
+    40,
+    52,
+    24,
+    16
   ],
-  [
-   52,
-   48
+  "vectors_sha256": "8ccb4e52b153c803c358fc20fb378e38d834862b814e71bb439ab514fcacbf37",
+  "gate_calib_cases": [
+    "none",
+    "none",
+    "none",
+    "none"
   ],
-  [
-   4,
-   96
-  ],
-  [
-   36,
-   64
-  ]
- ],
- "is_hard_K2": [
-  false,
-  true,
-  false,
-  false,
-  true,
-  false,
-  true,
-  false
- ],
- "gate_tau75": [
-  "none",
-  "argmax",
-  "none",
-  "none",
-  "argmax",
-  "none",
-  "argmax",
-  "none"
- ],
- "reinjected_conf_trace": [
-  32,
-  44,
-  36,
-  68,
-  40,
-  52,
-  24,
-  16
- ],
- "vectors_sha256": "3e5865030661ab125e66b98995a88ab3826031de647c819fd4d2e0c857b85a92"
+  "loop_response_wrong_loop": "none"
 }
