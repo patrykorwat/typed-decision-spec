@@ -137,20 +137,42 @@ def main (args : List String) : IO UInt32 := do
       ++ ", \"multi_gate_tau\": " ++ mGates
       ++ ", \"multi_gate_tau_updated\": " ++ mGatesU
       ++ ", \"multi_labels_updated\": " ++ mLabelsU
-      -- the SCORE contract (v1.5): value and confidence from DIFFERENT
-      -- loops (the point: they are independent quantities), gate at τ,
-      -- and the expected value of a demo distribution
+      -- the SCORE contract (v1.5.1): value/conf from DIFFERENT loops, each
+      -- response carries confidenceLoopIdx; the calibration carries loopIdx
+      -- and applies only at ITS loop; gateScore payload = the VALUE
       ++ ", \"score_value\": " ++ toString (rd 2 (iter F 2 H0))
       ++ ", \"score_conf\": " ++ toString (rd 5 (iter F 5 H0))
-      ++ ", \"score_gate\": \"" ++ (match gateScore ⟨tau0, hcert0⟩
+      ++ ", \"score_conf_loop\": 5"
+      ++ ", \"score_gate\": \"" ++ (match gateScore ⟨tau0, hcert0, 5⟩
             { value := rd 2 (iter F 2 H0), confidence := rd 5 (iter F 5 H0),
+              confidenceLoopIdx := 5,
               value_le_100 := hmod _, conf_le_100 := hmod _ } with
            | some _ => "argmax" | none => "none") ++ "\""
-      ++ ", \"score_gate_updated\": \"" ++ (match gateScore ⟨tau0, hcert0⟩
-            (scoreOfDist [(30, 40), (70, 60)] (rd 5 (iter F 5 H0))
+      -- POSITIVE path: loop MATCHES (2), conf 84 >= tau0 -> some value(52);
+      -- the payload is the value, NOT the confidence (84)
+      ++ ", \"score_payload_positive\": " ++ (match gateScore ⟨tau0, hcert0, 2⟩
+            { value := rd 6 (iter F 6 H0), confidence := rd 2 (iter F 2 H0),
+              confidenceLoopIdx := 2,
+              value_le_100 := hmod _, conf_le_100 := hmod _ } with
+           | some v => toString v | none => "null")
+      ++ ", \"score_gate_positive\": \"" ++ (match gateScore ⟨tau0, hcert0, 2⟩
+            { value := rd 6 (iter F 6 H0), confidence := rd 2 (iter F 2 H0),
+              confidenceLoopIdx := 2,
+              value_le_100 := hmod _, conf_le_100 := hmod _ } with
+           | some _ => "argmax" | none => "none") ++ "\""
+      -- WRONG loop: calib bound to loop 5, confidence from loop 2 -> none
+      -- even though 84 >= tau0 (isolates the loop check)
+      ++ ", \"score_gate_wrong_loop\": \"" ++ (match gateScore ⟨tau0, hcert0, 5⟩
+            { value := rd 6 (iter F 6 H0), confidence := rd 2 (iter F 2 H0),
+              confidenceLoopIdx := 2,
+              value_le_100 := hmod _, conf_le_100 := hmod _ } with
+           | some _ => "argmax" | none => "none") ++ "\""
+      ++ ", \"score_gate_updated\": \"" ++ (match gateScore ⟨tau0, hcert0, 5⟩
+            (scoreOfDist [(30, 40), (70, 60)] (rd 5 (iter F 5 H0)) 5
               demoDist_vals demoDist_sum (hmod _)) with
            | some v => toString v | none => "none") ++ "\""
       ++ ", \"score_ev\": " ++ toString (expectedValue [(30, 40), (70, 60)])
+      ++ ", \"score_exact_num\": " ++ toString (exactEVnum [(30, 40), (70, 60)])
       ++ "}"
     IO.println j
     return 0

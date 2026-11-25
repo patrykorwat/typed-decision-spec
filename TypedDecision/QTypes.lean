@@ -10,22 +10,30 @@ identical — this module states what each type MEANS and what the shared
 contract already guarantees for it.
 
 **Fully formal semantics (here):**
-* `noul` — a binary decision: exactly two declared options (witness
-  `BinaryResponse`); `tieBinary` shows the no-decision boundary is a
-  well-formed state.
-* `multi` — independent binary decisions over labels: a LIST of
-  independent `BinaryResponse`s, one per label (`MultiResponse`);
-  `multi_set_independent` is the formal content of independence —
-  updating one label's decision leaves every other label untouched
-  (as observed at position j, `?`-form to stay decision-free).
+* `noul` — a binary decision: exactly two declared options — the
+  YES/NO pair (`declared_pair`) — with the confidence loop carried
+  explicitly (`BinaryResponse` via `noulResponseOf`); `tieBinary` shows
+  the no-decision boundary is a well-formed state and
+  `tieBinary_defers` that it is gating-visible.
+* `multi` — **separate per-label binary distributions with update
+  locality**: a LIST of independent `BinaryResponse`s, one per UNIQUE
+  label (`labels_nodup`, `labels_nonempty`, `Fin`-indexed `multiSet`);
+  `multi_set_independent` proves the structural half — the statistical
+  half is NOT claimed (separate marginals do not determine a joint
+  distribution); `gateMulti` returns a `MultiDecisionResult` keeping
+  the label–decision mapping.
+* `score` — **a scalar-value contract on an explicit [0, 100] scale**:
+  `ScoreResponse` (value + confidence + the confidence's source loop —
+  separate quantities, neither functionally determined by the other),
+  `expectedValue` = floor of the exact rational EV
+  (`exactEVnum`/`expectedValue_floor`/`expectedValueTruncates`),
+  `scoreOfDist` (canonical path), `ScoreCalib` (own threshold + loop
+  binding), `gateScore` (payload = the value; wrong loop and
+  below-threshold both abstain).
 
-**Shared-property-only types (documented, not yet fully formal):**
-`choice` (pick one of K options — this IS the shared `Response`),
-`score` (a value on a scale — needs a scale type), `act` (an action —
-needs an action vocabulary), `tool` (a next step — needs a tool
-vocabulary). For these only the confidence-gating properties
-(`conf_is_top`, `probs_le_100`, `sum_100`, `Conforming`) are proved; the
-README presents them as such until dedicated contracts land.
+**Deferred (semantics genuinely differ, documented in README):**
+`act` (expected-cost actions), `tool` (agent next-step). For these only
+the deferral semantics are covered by `Conforming` for every `QType`.
 -/
 
 namespace QTypes
@@ -264,36 +272,46 @@ theorem tieBinary_defers (τ : Pct) (h : 50 < τ) :
     have : tieBinary.response.conf = 50 := rfl
     rw [this]; exact h)
 
-/-! ## Score: a scalar-value contract (v1.5) -/
+/-! ## Score: a scalar-value contract (v1.5, hardened v1.5.1) -/
 
 theorem le100_30 : (30 : Nat) ≤ 100 := by omega
 theorem le100_55 : (55 : Nat) ≤ 100 := by omega
 theorem le100_85 : (85 : Nat) ≤ 100 := by omega
 
 /-- **A score prediction**: a value on the explicit [0, 100] scale plus
-a confidence in the Pct sense. THE TWO ARE DIFFERENT QUANTITIES — value
-is what the model predicts on the scale, confidence is how certain the
-model is of that prediction (a model may predict 85 with 55% certainty;
-see `value_differs_from_confidence`). -/
+a confidence in the Pct sense. THE TWO ARE SEPARATE QUANTITIES — the
+value is what the model predicts on the scale, the confidence is how
+certain the model is of that prediction, and neither is functionally
+determined by the other (see `value_differs_from_confidence` and
+`same_conf_diff_value`). `confidenceLoopIdx` records WHICH loop the
+confidence came from — a calibration fitted at one loop must not be
+applied to a confidence from another (mirror of `Calib.loopIdx`). -/
 structure ScoreResponse where
   value : Pct
   confidence : Pct
+  confidenceLoopIdx : Nat
   value_le_100 : value ≤ 100
   conf_le_100 : confidence ≤ 100
 
-/-- Two witnesses of the score contract. -/
+/-- Two witnesses of the score contract (confidence from loops 2 and 5). -/
 def score85of55 : ScoreResponse :=
-  { value := 85, confidence := 55, value_le_100 := le100_85, conf_le_100 := le100_55 }
+  { value := 85, confidence := 55, confidenceLoopIdx := 2,
+    value_le_100 := le100_85, conf_le_100 := le100_55 }
 
 def score30of55 : ScoreResponse :=
-  { value := 30, confidence := 55, value_le_100 := le100_30, conf_le_100 := le100_55 }
+  { value := 30, confidence := 55, confidenceLoopIdx := 5,
+    value_le_100 := le100_30, conf_le_100 := le100_55 }
 
 /-- The value of the 85-of-55 witness. -/
 theorem score85of55_value : score85of55.value = 85 := rfl
 /-- The confidence of the 85-of-55 witness. -/
 theorem score85of55_conf : score85of55.confidence = 55 := rfl
+/-- The confidence loop of the 85-of-55 witness. -/
+theorem score85of55_loop : score85of55.confidenceLoopIdx = 2 := rfl
 /-- The value of the 30-of-55 witness. -/
 theorem score30of55_value : score30of55.value = 30 := rfl
+/-- The confidence loop of the 30-of-55 witness. -/
+theorem score30of55_loop : score30of55.confidenceLoopIdx = 5 := rfl
 
 /-- **The predicted value is not its certainty**: a well-formed score
 response whose value differs from its confidence. -/
@@ -311,43 +329,77 @@ theorem same_conf_diff_value :
   show (30 : Nat) ≠ 85
   omega
 
+/-- **The loops differ too**: the two witnesses carry their confidence
+from different loops — the loop index is independent data, not derived
+from the value. -/
+theorem same_conf_diff_loop :
+    score30of55.confidenceLoopIdx ≠ score85of55.confidenceLoopIdx := by
+  show (5 : Nat) ≠ 2
+  omega
+
 /-- The total weight of a score distribution. -/
 def distSum (dist : List (Nat × Nat)) : Nat := (dist.map Prod.snd).sum
 
-/-- **The expected value** of a score distribution on the [0, 100]
-scale: Σ value·weight / 100 (the weights are the integer core of a
-probability distribution). This is the mathematical definition the
-score contract commits to. -/
+/-- **The EXACT numerator** of the expected value: Σ value·weight — the
+rational expected value is `exactEVnum dist / 100` (denominator fixed
+at 100), NO truncation. -/
+def exactEVnum (dist : List (Nat × Nat)) : Nat :=
+  (dist.map (fun p => p.1 * p.2)).sum
+
+/-- **The integer expected value**: the FLOOR of the exact rational
+expected value `exactEVnum dist / 100` (`Nat` division truncates). The
+name documents the semantics — e.g. `[(0,50),(1,50)]` has exact value
+1/2 and integer value 0 (`expectedValueTruncates`). -/
 def expectedValue (dist : List (Nat × Nat)) : Nat :=
-  (dist.map (fun p => p.1 * p.2)).sum / 100
+  exactEVnum dist / 100
+
+/-- **The integer EV is the floor of the exact one**: `100 · EV ≤ Σ v·w`
+and `Σ v·w ≤ 100 · EV + 99` — the exact rational value lies in
+`[EV, EV + 1)`. -/
+theorem expectedValue_floor (dist : List (Nat × Nat)) :
+    100 * expectedValue dist ≤ exactEVnum dist
+      ∧ exactEVnum dist ≤ 100 * expectedValue dist + 99 := by
+  have hdm := Nat.div_add_mod (exactEVnum dist) 100
+  have hlt := Nat.mod_lt (exactEVnum dist) (by omega : 0 < 100)
+  show 100 * (exactEVnum dist / 100) ≤ exactEVnum dist
+    ∧ exactEVnum dist ≤ 100 * (exactEVnum dist / 100) + 99
+  omega
+
+/-- **Truncation is real, not hypothetical**: the distribution
+`[(0, 50), (1, 50)]` has exact expected value 1/2 (numerator 50) and
+integer expected value 0. -/
+theorem expectedValueTruncates :
+    expectedValue [(0, 50), (1, 50)] = 0 ∧ exactEVnum [(0, 50), (1, 50)] = 50 := by
+  constructor <;> rfl
 
 /-- Auxiliary bound: Σ v·w ≤ 100·Σ w whenever every value is ≤ 100. -/
 theorem mapPairSum_le (dist : List (Nat × Nat))
     (hvals : ∀ p ∈ dist, p.1 ≤ 100) :
-    (dist.map (fun p => p.1 * p.2)).sum ≤ 100 * (dist.map Prod.snd).sum := by
+    exactEVnum dist ≤ 100 * (dist.map Prod.snd).sum := by
   induction dist with
-  | nil => simp
+  | nil => simp [exactEVnum]
   | cons p rest ih =>
     have hmem : p ∈ p :: rest := List.mem_cons_self
     have hp := hvals p hmem
     have hmul : p.1 * p.2 ≤ 100 * p.2 := Nat.mul_le_mul_right p.2 hp
     have hrest := ih (fun q hq => hvals q (List.mem_cons_of_mem p hq))
-    simp only [List.map_cons, List.sum_cons] at *
+    simp only [List.map_cons, List.sum_cons, exactEVnum] at *
     omega
 
 /-- **The expected value stays on the scale**: for a well-formed score
-distribution (every value ≤ 100, weights summing to 100), the expected
-value is ≤ 100. -/
+distribution (every value ≤ 100, weights summing to 100), the integer
+expected value is ≤ 100. -/
 theorem expectedValue_le_100 (dist : List (Nat × Nat))
     (hvals : ∀ p ∈ dist, p.1 ≤ 100) (hsum : distSum dist = 100) :
     expectedValue dist ≤ 100 := by
-  show (dist.map (fun p => p.1 * p.2)).sum / 100 ≤ 100
   have hproj : (dist.map Prod.snd).sum = 100 := hsum
   have h := mapPairSum_le dist hvals
+  show exactEVnum dist / 100 ≤ 100
   omega
 
-/-- A demo: the expected value of `[(30, 40), (70, 60)]` (weights 40+60)
-is 54 — closed computation, the definition is executable. -/
+/-- A demo: the integer expected value of `[(30, 40), (70, 60)]`
+(weights 40+60) is 54 — closed computation, the definition is
+executable. -/
 theorem expectedValue_demo : expectedValue [(30, 40), (70, 60)] = 54 := rfl
 
 /-- The demo distribution's values are on the scale. -/
@@ -364,41 +416,57 @@ theorem demoDist_sum : distSum ([(30, 40), (70, 60)]: List (Nat × Nat)) = 100 :
   show (((30, 40) :: ([(70, 60)]: List (Nat × Nat))).map Prod.snd).sum = 100
   simp
 
+/-- The demo distribution's exact numerator. -/
+theorem demoDist_exact : exactEVnum [(30, 40), (70, 60)] = 5400 := rfl
+
 /-- **The canonical score response from a distribution**: the predicted
-value IS the expected value of the distribution (proved on scale); the
-confidence is carried separately. -/
-def scoreOfDist (dist : List (Nat × Nat)) (c : Pct)
+value IS the integer expected value of the distribution (proved on
+scale); the confidence is carried separately, WITH its source loop. -/
+def scoreOfDist (dist : List (Nat × Nat)) (c : Pct) (loopIdx : Nat)
     (hvals : ∀ p ∈ dist, p.1 ≤ 100) (hsum : distSum dist = 100)
     (hc : c ≤ 100) : ScoreResponse :=
-  { value := expectedValue dist, confidence := c,
+  { value := expectedValue dist, confidence := c, confidenceLoopIdx := loopIdx,
     value_le_100 := expectedValue_le_100 dist hvals hsum, conf_le_100 := hc }
 
 /-- **A score calibration is its own object** — separate from the
-binary `Calib` (the score contract has its own threshold and scope;
-the QType is the type itself). -/
+binary `Calib` (the score contract has its own threshold, scope and
+LOOP BINDING). `threshold_le_100` is ONLY the structural scale bound —
+whether τ is statistically calibrated is empirical and outside this
+model (same precision as `Calib.certified` in Loop.lean). -/
 structure ScoreCalib where
   τ : Pct
-  certified : τ ≤ 100
+  threshold_le_100 : τ ≤ 100
+  loopIdx : Nat
 
 /-- **The score gate**: decide — with the predicted VALUE as payload —
-iff the response's confidence admits it; otherwise abstain. The payload
-is `r.value`, never `r.confidence`. -/
+iff the calibration is bound to the confidence's OWN loop AND the
+confidence admits it; otherwise abstain. The payload is `r.value`,
+never `r.confidence`. -/
 def gateScore (c : ScoreCalib) (r : ScoreResponse) : Option Nat :=
-  if c.τ ≤ r.confidence then some r.value else none
+  if c.loopIdx = r.confidenceLoopIdx ∧ c.τ ≤ r.confidence then some r.value else none
+
+/-- **Wrong loop: the score calibration does not apply** — the gate
+abstains regardless of the confidence (mirror of
+`wrong_loop_never_decides`). -/
+theorem gateScore_wrong_loop_never_decides (c : ScoreCalib) (r : ScoreResponse)
+    (h : c.loopIdx ≠ r.confidenceLoopIdx) : gateScore c r = none := by
+  simp only [gateScore]
+  exact if_neg (fun hc => h hc.1)
 
 /-- **Below the score threshold the gate abstains** (mirror of
 `gate_conforming` for the score contract). -/
 theorem gateScore_defers_below (c : ScoreCalib) (r : ScoreResponse)
     (h : r.confidence < c.τ) : gateScore c r = none := by
   simp only [gateScore]
-  exact if_neg (Nat.not_le.mpr h)
+  exact if_neg (fun hc => Nat.not_le.mpr h hc.2)
 
-/-- **The payload is the predicted VALUE** — even though value and
-confidence are different quantities, the deciding gate returns the
-value (mirror of the score contract's decision shape). -/
+/-- **The payload is the predicted VALUE** — at an honest call site
+(loop match) with the confidence admitting the threshold, the deciding
+gate returns the value, never the confidence. -/
 theorem gateScore_payload_is_value (c : ScoreCalib) (r : ScoreResponse)
-    (hdec : c.τ ≤ r.confidence) : gateScore c r = some r.value := by
+    (hloop : c.loopIdx = r.confidenceLoopIdx) (hdec : c.τ ≤ r.confidence) :
+    gateScore c r = some r.value := by
   simp only [gateScore]
-  rw [if_pos hdec]
+  rw [if_pos (by exact ⟨hloop, hdec⟩)]
 
 end QTypes

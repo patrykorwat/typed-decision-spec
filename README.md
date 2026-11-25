@@ -45,22 +45,27 @@ threshold, and update locality). A multi question has **at least one
 label** (`labels_nonempty`) — the empty collection is not a question,
 and it keeps `Fin m.labels.length` inhabited.
 
-**`score`** (as of v1.5, `TypedDecision/QTypes.lean`) — a
-**scalar-value contract, deliberately NOT a `BinaryResponse` variant**:
+**`score`** (as of v1.5, hardened v1.5.1, `TypedDecision/QTypes.lean`) —
+a **scalar-value contract, deliberately NOT a `BinaryResponse` variant**:
 `ScoreResponse` carries a `value` on the explicit [0, 100] scale
-(`value_le_100`) plus a `confidence` in the Pct sense (`conf_le_100`) —
-**two different quantities** (a model may predict 85 with 55%
-certainty; `value_differs_from_confidence` and `same_conf_diff_value`
-prove they are independent). The **expected value** of a score
-distribution (`expectedValue`: Σ value·weight / 100) is the mathematical
-definition the contract commits to — it stays on the scale
-(`expectedValue_le_100`), and `scoreOfDist` builds the canonical
-response whose value IS the expected value. Calibration is a separate
-object (`ScoreCalib`); `gateScore` decides **with the predicted value as
-payload** (`gateScore_payload_is_value`) and abstains below its own
-threshold (`gateScore_defers_below`). Python conformance: golden score
-response from different loops, gating mirror, EV=54 demo, negative and
-boundary cases.
+(`value_le_100`) plus a `confidence` in the Pct sense (`conf_le_100`)
+**and the confidence's source loop** (`confidenceLoopIdx`) — separate
+quantities, neither functionally determined by the other
+(`value_differs_from_confidence`: 85 predicted with 55% certainty;
+`same_conf_diff_value`, `same_conf_diff_loop`). The **expected value**
+is defined EXACTLY (`exactEVnum`: Σ value·weight — the rational EV is
+`exactEVnum / 100`) and the integer `expectedValue` is **its floor**,
+pinned by `expectedValue_floor` (100·EV ≤ Σ v·w ≤ 100·EV + 99) and
+shown non-vacuous by `expectedValueTruncates` ([(0,50),(1,50)]: exact
+1/2, integer 0); `scoreOfDist` builds the canonical response. Calibration
+is a separate object (`ScoreCalib` — own τ, `threshold_le_100` as the
+structural scale bound ONLY, and `loopIdx`); `gateScore` decides **with
+the predicted value as payload** (`gateScore_payload_is_value`) and
+abstains on a wrong loop (`gateScore_wrong_loop_never_decides`) and
+below its own threshold (`gateScore_defers_below`). Python conformance:
+golden score from different loops, all three gating branches mirrored
+(none / payload=value / wrong-loop), ill-formed responses rejected by
+validation, EV=54 demo with exact numerator 5400.
 
 For `act` and `tool` the semantics genuinely differ (expected-cost
 actions; agent next-step). A typed

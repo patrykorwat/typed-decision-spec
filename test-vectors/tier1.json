@@ -76,7 +76,7 @@
     "argmax",
     "none"
   ],
-  "vectors_sha256": "63f6a820f204e6842c34c9e314b3769c9b4d5aaffbda56dd7802e1f8e6b7f206",
+  "vectors_sha256": "68b7830467bc9c9ffdfca8540c7770833d27a469f21dbcd07caebbe28346fec2",
   "gate_calib_cases": [
     "none",
     "none",
@@ -139,5 +139,10 @@
   "score_conf": 20,
   "score_gate": "none",
   "score_gate_updated": "none",
-  "score_ev": 54
+  "score_ev": 54,
+  "score_conf_loop": 5,
+  "score_payload_positive": 52,
+  "score_gate_positive": "argmax",
+  "score_gate_wrong_loop": "none",
+  "score_exact_num": 5400
 }

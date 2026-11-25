@@ -457,51 +457,94 @@ def test_multi_rejects() -> None:
     assert valid_index(1, labels), "index 1 is in range"
 
 
-# ---- score conformance (v1.5) ----
+# ---- score conformance (v1.5, hardened v1.5.1) ----
 
-def _mirror_gate_score(tau, conf, value):
-    """Python mirror of gateScore: the payload is the VALUE; below the
-    threshold the gate abstains."""
-    return value if tau <= conf else None
+def _mirror_gate_score(calib_loop, conf_loop, conf, value):
+    """Python mirror of gateScore: the payload is the VALUE (never the
+    confidence); below the threshold or at a wrong loop the gate abstains.
+    Bounds are VALIDATED (a response with value or conf > 100 is
+    ill-formed — mirror of the structure's `value_le_100`/`conf_le_100`)."""
+    if value > 100 or conf > 100:
+        raise ValueError("ill-formed score response: value/confidence off the [0,100] scale")
+    if calib_loop != conf_loop:
+        return None
+    return value if tau_le(conf, calib_tau) else None
+
+
+def tau_le(conf, tau):
+    """Mirror of gateP: tau <= conf."""
+    return tau <= conf
+
+# the calibration object for the mirrors (bound to loop 5, tau = the pin's
+# calibration threshold) — mirrors ScoreCalib { tau, threshold_le_100, loopIdx }
+calib_tau = CALIBRATION_THRESHOLD
 
 
 def test_score_golden() -> None:
     """The Lean-exported score response: value and confidence come from
-    DIFFERENT loops (independence made visible in the data), the gate at
-    the calibration threshold mirrors the rule, and the demo expected
-    value is 54."""
+    DIFFERENT loops (separate quantities made visible in the data), the
+    gate at the calibration threshold mirrors the rule in ALL branches
+    (none / payload=value / wrong-loop), and the demo expected value is
+    54 with exact numerator 5400."""
     ref = ReferenceEngine(V["state"])
     # value = loop-2 raw readout, confidence = loop-5 raw readout
     assert V["score_value"] == ref.raw_at(2), "score value must be the loop-2 readout"
     assert V["score_conf"] == ref.raw_at(5), "score conf must be the loop-5 readout"
-    # the export demonstrates the independence: value != confidence
+    assert V["score_conf_loop"] == 5, "the exported confidence carries its loop"
+    # the export demonstrates the separation: value != confidence
     assert V["score_value"] != V["score_conf"], (
         "the exported score response must have value != confidence"
     )
-    # gating mirrors gateScore: 20 < 75 ⇒ none
-    expected = "argmax" if CALIBRATION_THRESHOLD <= V["score_conf"] else "none"
-    assert V["score_gate"] == expected == "none", (
-        "score gate must defer below the threshold"
+    # gating mirrors gateScore in ALL THREE branches:
+    # 1. abstention (loop 5 matches, conf 20 < 75)
+    assert V["score_gate"] == "none", "score gate must defer below the threshold"
+    assert _mirror_gate_score(5, 5, V["score_conf"], V["score_value"]) is None
+    # 2. positive path (loop 2 matches, conf 84 >= 75): payload = value 52
+    assert V["score_gate_positive"] == "argmax", "positive path must decide"
+    assert V["score_payload_positive"] == ref.raw_at(6), (
+        "the payload must be the VALUE (loop-6 readout), not the confidence"
     )
-    # expected value of the demo distribution: Σ v·w / 100
+    assert V["score_payload_positive"] != V["score_conf"], (
+        "payload must not be the confidence (84)"
+    )
+    assert _mirror_gate_score(2, 2, 84, ref.raw_at(6)) == V["score_payload_positive"], (
+        "Python mirror of the positive path must equal the frozen payload"
+    )
+    # 3. wrong loop (calib at 5, conf from 2): none even though 84 >= 75
+    assert V["score_gate_wrong_loop"] == "none", "wrong loop must abstain"
+    assert _mirror_gate_score(5, 2, 84, ref.raw_at(6)) is None
+    # expected value of the demo distribution: floor of exact EV
     dist = [(30, 40), (70, 60)]
     assert sum(v * w for v, w in dist) // 100 == V["score_ev"] == 54
+    assert sum(v * w for v, w in dist) == V["score_exact_num"] == 5400
 
 
 def test_score_rejects() -> None:
     """Negative and boundary cases (Python mirrors of the score contract's
     theorems): below threshold the gate abstains (gateScore_defers_below);
     the deciding payload is the VALUE, never the confidence
-    (gateScore_payload_is_value); the bounds are enforced (value/conf
-    ≤ 100)."""
+    (gateScore_payload_is_value); wrong loop abstains regardless
+    (gateScore_wrong_loop_never_decides); ill-formed responses (value or
+    confidence off the [0,100] scale) are REJECTED by validation."""
     tau = CALIBRATION_THRESHOLD
     # deferral below threshold — even for a large value
-    assert _mirror_gate_score(tau, tau - 1, 99) is None
+    assert _mirror_gate_score(5, 5, tau - 1, 99) is None
     # deciding payload is the value, NOT the confidence
-    assert _mirror_gate_score(tau, tau, 85) == 85
-    assert _mirror_gate_score(tau, 100, 30) == 30
-    # the two differ in the data: 85-of-55 would have payload != conf
-    assert 85 != 55
+    assert _mirror_gate_score(2, 2, tau, 85) == 85
+    assert _mirror_gate_score(2, 2, 100, 30) == 30
+    # wrong loop abstains regardless of the confidence
+    assert _mirror_gate_score(5, 2, tau, 85) is None
+    assert _mirror_gate_score(5, 2, 100, 30) is None
+    # ILL-FORMED responses are rejected (validation, not silent acceptance):
+    # value 101 and confidence 101 are off the scale — mirror of
+    # value_le_100 / conf_le_100
+    for bad in ((5, 5, 101, 20), (5, 5, 20, 101)):
+        calib_loop, conf_loop, value, conf = bad
+        try:
+            _mirror_gate_score(calib_loop, conf_loop, conf, value)
+            raise AssertionError(f"ill-formed response must be rejected: {bad}")
+        except ValueError:
+            pass
     # bounds: raw readouts stay ≤ 100 by construction
     ref = ReferenceEngine(V["state"])
     for t in range(1, SPEC_T + 1):
