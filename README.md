@@ -52,9 +52,10 @@ a **scalar-value contract, deliberately NOT a `BinaryResponse` variant**:
 **and the confidence's source loop** (`confidenceLoopIdx`) — separate
 quantities, neither functionally determined by the other
 (`value_differs_from_confidence`: 85 predicted with 55% certainty;
-`same_conf_diff_value`, `same_conf_diff_loop`). The **expected value**
-is defined EXACTLY (`exactEVnum`: Σ value·weight — the rational EV is
-`exactEVnum / 100`) and the integer `expectedValue` is **its floor**,
+`same_conf_diff_value` — same confidence, different values;
+`same_value_pair_differs` — same value, different confidences;
+`same_conf_diff_loop` — different loops for the same confidence). The
+**expected value** is defined EXACTLY (`exactEVnum`: Σ value·weight — the rational EV is
 pinned by `expectedValue_floor` (100·EV ≤ Σ v·w ≤ 100·EV + 99) and
 shown non-vacuous by `expectedValueTruncates` ([(0,50),(1,50)]: exact
 1/2, integer 0); `scoreOfDist` builds the canonical response. Calibration
@@ -62,10 +63,18 @@ is a separate object (`ScoreCalib` — own τ, `threshold_le_100` as the
 structural scale bound ONLY, and `loopIdx`); `gateScore` decides **with
 the predicted value as payload** (`gateScore_payload_is_value`) and
 abstains on a wrong loop (`gateScore_wrong_loop_never_decides`) and
-below its own threshold (`gateScore_defers_below`). Python conformance:
-golden score from different loops, all three gating branches mirrored
-(none / payload=value / wrong-loop), ill-formed responses rejected by
-validation, EV=54 demo with exact numerator 5400.
+below its own threshold (`gateScore_defers_below`). **Provenance
+decision, recorded:** `confidenceLoopIdx` is *trusted adapter metadata*,
+not a proof of origin (`loops_are_metadata` exhibits a response with
+confidence 55 bound to loop 5 regardless of where the value came from);
+full provenance would need a loop-indexed type — deliberately deferred.
+`gateScoreResult` pairs the decision with its confidence loop so the
+pairing travels with the result. Python conformance: golden score from
+different loops, all gating branches mirrored three-way (none /
+payload=value / wrong-loop, frozen == Lean == Python), per-label
+distributions compared, ill-formed responses (out of scale in BOTH
+directions, and non-integers) rejected by validation, EV=54 demo with
+exact numerator 5400.
 
 For `act` and `tool` the semantics genuinely differ (expected-cost
 actions; agent next-step). A typed

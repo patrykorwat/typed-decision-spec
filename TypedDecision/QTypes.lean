@@ -469,4 +469,68 @@ theorem gateScore_payload_is_value (c : ScoreCalib) (r : ScoreResponse)
   simp only [gateScore]
   rw [if_pos (by exact ⟨hloop, hdec⟩)]
 
+theorem le100_40 : (40 : Nat) ≤ 100 := by omega
+theorem le100_70 : (70 : Nat) ≤ 100 := by omega
+
+def score30of40 : ScoreResponse :=
+  { value := 30, confidence := 40, confidenceLoopIdx := 2,
+    value_le_100 := le100_30, conf_le_100 := le100_40 }
+
+def score30of70 : ScoreResponse :=
+  { value := 30, confidence := 70, confidenceLoopIdx := 2,
+    value_le_100 := le100_30, conf_le_100 := le100_70 }
+
+theorem score30of40_value : score30of40.value = 30 := rfl
+theorem score30of40_conf : score30of40.confidence = 40 := rfl
+theorem score30of70_value : score30of70.value = 30 := rfl
+theorem score30of70_conf : score30of70.confidence = 70 := rfl
+
+/-- **The same value with different confidences**: neither quantity is a
+function of the other — the reverse direction of `same_conf_diff_value`
+(their confidences differ AND their values agree). -/
+theorem same_value_pair_differs :
+    score30of40.value = score30of70.value
+      ∧ score30of40.confidence ≠ score30of70.confidence := by
+  refine ⟨rfl, ?_⟩
+  show (40 : Nat) ≠ 70
+  omega
+
+/-- The score contract does NOT pin the value/confidence provenance
+loop — it is trusted adapter metadata. This is a DECISION, recorded here
+and in the README: `confidenceLoopIdx` is an annotation, not a proof of
+origin (provenance would need a loop-indexed type and a controlled
+constructor). -/
+theorem loops_are_metadata :
+    ∃ (r : ScoreResponse), r.confidence = 55 ∧ r.confidenceLoopIdx = 5 := by
+  exact ⟨score30of55, rfl, rfl⟩
+
+/-- **The score result of gating**: the payload/value pairing travels
+with the result — the mirror of `MultiDecisionResult` for the scalar
+contract. -/
+structure ScoreDecisionResult where
+  value : Option Nat
+  confLoopIdx : Nat
+
+/-- Gating with the result carrying its provenance: the loop index in
+the result is the calibration's binding, so an adapter cannot lose the
+conf-loop ↔ calib-loop pairing. -/
+def gateScoreResult (c : ScoreCalib) (r : ScoreResponse) : ScoreDecisionResult :=
+  { value := gateScore c r, confLoopIdx := r.confidenceLoopIdx }
+
+/-- The result's payload agrees with the plain gate. -/
+theorem gateScoreResult_value (c : ScoreCalib) (r : ScoreResponse) :
+    (gateScoreResult c r).value = gateScore c r := rfl
+
+/-- The result carries the response's own confidence loop. -/
+theorem gateScoreResult_loop (c : ScoreCalib) (r : ScoreResponse) :
+    (gateScoreResult c r).confLoopIdx = r.confidenceLoopIdx := rfl
+
+/-- **Separate per-label quantities**: the two 30-of-x witnesses carry
+the SAME value with DIFFERENT confidences (and vice versa in
+`same_conf_diff_value`) — neither quantity is a function of the other. -/
+theorem same_value_pair_differs2 :
+    score30of40.value = score30of70.value
+      ∧ score30of40.confidence ≠ score30of70.confidence :=
+  same_value_pair_differs
+
 end QTypes

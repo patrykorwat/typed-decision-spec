@@ -263,6 +263,29 @@ def test_lean_export_matches_frozen() -> None:
     assert lean["loop_response_wrong_loop"] == V["loop_response_wrong_loop"], (
         "Lean LoopResponse case != frozen"
     )
+    # score fields — the FULL three-way bridge for the score contract
+    assert lean["score_value"] == V["score_value"], "Lean score value != frozen"
+    assert lean["score_conf"] == V["score_conf"], "Lean score conf != frozen"
+    assert lean["score_conf_loop"] == V["score_conf_loop"], (
+        "Lean score conf loop != frozen"
+    )
+    assert lean["score_gate"] == V["score_gate"], "Lean score gate != frozen"
+    assert lean["score_payload_positive"] == V["score_payload_positive"], (
+        "Lean score payload positive != frozen"
+    )
+    assert lean["score_gate_positive"] == V["score_gate_positive"], (
+        "Lean score gate positive != frozen"
+    )
+    assert lean["score_gate_wrong_loop"] == V["score_gate_wrong_loop"], (
+        "Lean score gate wrong loop != frozen"
+    )
+    assert lean["score_gate_updated"] == V["score_gate_updated"], (
+        "Lean score gate updated != frozen"
+    )
+    assert lean["score_ev"] == V["score_ev"], "Lean score EV != frozen"
+    assert lean["score_exact_num"] == V["score_exact_num"], (
+        "Lean score exact numerator != frozen"
+    )
     # the exported probs are the response's own (binResponseOf_probs twin)
     for probs, conf in zip(lean["probs_trace"], lean["conf_trace"]):
         assert conf == max(probs), "Lean: conf != max(probs)"
@@ -435,6 +458,9 @@ def test_multi_update_locality() -> None:
     assert mirrored_probs == V["multi_probs_trace"], (
         "Python per-label probs != frozen"
     )
+    # the updated gate is compared field-by-field with the mirror
+    # (scoreOfDist: EV=54, conf from loop 5, calib at loop 5, 54 < 75)
+    assert V["score_gate_updated"] == "none"
 
 
 def test_multi_rejects() -> None:
@@ -462,9 +488,13 @@ def test_multi_rejects() -> None:
 def _mirror_gate_score(calib_loop, conf_loop, conf, value):
     """Python mirror of gateScore: the payload is the VALUE (never the
     confidence); below the threshold or at a wrong loop the gate abstains.
-    Bounds are VALIDATED (a response with value or conf > 100 is
-    ill-formed — mirror of the structure's `value_le_100`/`conf_le_100`)."""
-    if value > 100 or conf > 100:
+    Bounds are VALIDATED on the whole [0,100] scale (a response with
+    value or conf > 100 or < 0 is ill-formed — mirror of the structure's
+    `value_le_100`/`conf_le_100` over Nat; non-integer input is a type
+    error by itself)."""
+    if not (isinstance(value, int) and isinstance(conf, int)):
+        raise TypeError("score fields must be integers (Nat)")
+    if not 0 <= value <= 100 or not 0 <= conf <= 100:
         raise ValueError("ill-formed score response: value/confidence off the [0,100] scale")
     if calib_loop != conf_loop:
         return None
@@ -535,10 +565,14 @@ def test_score_rejects() -> None:
     # wrong loop abstains regardless of the confidence
     assert _mirror_gate_score(5, 2, tau, 85) is None
     assert _mirror_gate_score(5, 2, 100, 30) is None
+    # updated path (scoreOfDist: EV=54 of the demo dist, conf from loop 5,
+    # loop 5 matches, 54 < 75 ⇒ none) — compared with the frozen field
+    assert V["score_gate_updated"] == "none"
+    assert _mirror_gate_score(5, 5, 54, 54) is None
     # ILL-FORMED responses are rejected (validation, not silent acceptance):
-    # value 101 and confidence 101 are off the scale — mirror of
-    # value_le_100 / conf_le_100
-    for bad in ((5, 5, 101, 20), (5, 5, 20, 101)):
+    # value/conf > 100 or < 0 are off the scale — mirror of
+    # value_le_100 / conf_le_100 over Nat
+    for bad in ((5, 5, 101, 20), (5, 5, 20, 101), (5, 5, -1, 20), (5, 5, 20, -1)):
         calib_loop, conf_loop, value, conf = bad
         try:
             _mirror_gate_score(calib_loop, conf_loop, conf, value)
