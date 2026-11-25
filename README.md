@@ -45,10 +45,27 @@ threshold, and update locality). A multi question has **at least one
 label** (`labels_nonempty`) — the empty collection is not a question,
 and it keeps `Fin m.labels.length` inhabited.
 
-For `score`, `act` and `tool` the semantics genuinely differ (expected value
-on a scale; expected-cost actions; agent next-step). A typed
+**`score`** (as of v1.5, `TypedDecision/QTypes.lean`) — a
+**scalar-value contract, deliberately NOT a `BinaryResponse` variant**:
+`ScoreResponse` carries a `value` on the explicit [0, 100] scale
+(`value_le_100`) plus a `confidence` in the Pct sense (`conf_le_100`) —
+**two different quantities** (a model may predict 85 with 55%
+certainty; `value_differs_from_confidence` and `same_conf_diff_value`
+prove they are independent). The **expected value** of a score
+distribution (`expectedValue`: Σ value·weight / 100) is the mathematical
+definition the contract commits to — it stays on the scale
+(`expectedValue_le_100`), and `scoreOfDist` builds the canonical
+response whose value IS the expected value. Calibration is a separate
+object (`ScoreCalib`); `gateScore` decides **with the predicted value as
+payload** (`gateScore_payload_is_value`) and abstains below its own
+threshold (`gateScore_defers_below`). Python conformance: golden score
+response from different loops, gating mirror, EV=54 demo, negative and
+boundary cases.
+
+For `act` and `tool` the semantics genuinely differ (expected-cost
+actions; agent next-step). A typed
 `ResponseFor : QType → Type` remains the target; until then this contract makes
-no claim about those three types' payload semantics (their deferral
+no claim about those two types' payload semantics (their deferral
 semantics ARE covered by `Conforming` for every `QType`).
 
 ## Proof audit (v1.4.2)

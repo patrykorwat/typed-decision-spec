@@ -457,6 +457,57 @@ def test_multi_rejects() -> None:
     assert valid_index(1, labels), "index 1 is in range"
 
 
+# ---- score conformance (v1.5) ----
+
+def _mirror_gate_score(tau, conf, value):
+    """Python mirror of gateScore: the payload is the VALUE; below the
+    threshold the gate abstains."""
+    return value if tau <= conf else None
+
+
+def test_score_golden() -> None:
+    """The Lean-exported score response: value and confidence come from
+    DIFFERENT loops (independence made visible in the data), the gate at
+    the calibration threshold mirrors the rule, and the demo expected
+    value is 54."""
+    ref = ReferenceEngine(V["state"])
+    # value = loop-2 raw readout, confidence = loop-5 raw readout
+    assert V["score_value"] == ref.raw_at(2), "score value must be the loop-2 readout"
+    assert V["score_conf"] == ref.raw_at(5), "score conf must be the loop-5 readout"
+    # the export demonstrates the independence: value != confidence
+    assert V["score_value"] != V["score_conf"], (
+        "the exported score response must have value != confidence"
+    )
+    # gating mirrors gateScore: 20 < 75 ⇒ none
+    expected = "argmax" if CALIBRATION_THRESHOLD <= V["score_conf"] else "none"
+    assert V["score_gate"] == expected == "none", (
+        "score gate must defer below the threshold"
+    )
+    # expected value of the demo distribution: Σ v·w / 100
+    dist = [(30, 40), (70, 60)]
+    assert sum(v * w for v, w in dist) // 100 == V["score_ev"] == 54
+
+
+def test_score_rejects() -> None:
+    """Negative and boundary cases (Python mirrors of the score contract's
+    theorems): below threshold the gate abstains (gateScore_defers_below);
+    the deciding payload is the VALUE, never the confidence
+    (gateScore_payload_is_value); the bounds are enforced (value/conf
+    ≤ 100)."""
+    tau = CALIBRATION_THRESHOLD
+    # deferral below threshold — even for a large value
+    assert _mirror_gate_score(tau, tau - 1, 99) is None
+    # deciding payload is the value, NOT the confidence
+    assert _mirror_gate_score(tau, tau, 85) == 85
+    assert _mirror_gate_score(tau, 100, 30) == 30
+    # the two differ in the data: 85-of-55 would have payload != conf
+    assert 85 != 55
+    # bounds: raw readouts stay ≤ 100 by construction
+    ref = ReferenceEngine(V["state"])
+    for t in range(1, SPEC_T + 1):
+        assert ref.raw_at(t) <= 100
+
+
 def test_reference_matches_frozen_trace() -> None:
     ref = ReferenceEngine(V["state"])
     got = [ref.conf_at(t) for t in range(1, SPEC_T + 1)]
@@ -581,6 +632,8 @@ def main() -> int:
         test_multi_golden,
         test_multi_update_locality,
         test_multi_rejects,
+        test_score_golden,
+        test_score_rejects,
         test_reference_matches_frozen_trace,
         test_ishard_matches_frozen_and_boundary,
         test_gate_matches_frozen_and_boundary,

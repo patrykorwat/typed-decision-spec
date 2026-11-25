@@ -137,6 +137,20 @@ def main (args : List String) : IO UInt32 := do
       ++ ", \"multi_gate_tau\": " ++ mGates
       ++ ", \"multi_gate_tau_updated\": " ++ mGatesU
       ++ ", \"multi_labels_updated\": " ++ mLabelsU
+      -- the SCORE contract (v1.5): value and confidence from DIFFERENT
+      -- loops (the point: they are independent quantities), gate at τ,
+      -- and the expected value of a demo distribution
+      ++ ", \"score_value\": " ++ toString (rd 2 (iter F 2 H0))
+      ++ ", \"score_conf\": " ++ toString (rd 5 (iter F 5 H0))
+      ++ ", \"score_gate\": \"" ++ (match gateScore ⟨tau0, hcert0⟩
+            { value := rd 2 (iter F 2 H0), confidence := rd 5 (iter F 5 H0),
+              value_le_100 := hmod _, conf_le_100 := hmod _ } with
+           | some _ => "argmax" | none => "none") ++ "\""
+      ++ ", \"score_gate_updated\": \"" ++ (match gateScore ⟨tau0, hcert0⟩
+            (scoreOfDist [(30, 40), (70, 60)] (rd 5 (iter F 5 H0))
+              demoDist_vals demoDist_sum (hmod _)) with
+           | some v => toString v | none => "none") ++ "\""
+      ++ ", \"score_ev\": " ++ toString (expectedValue [(30, 40), (70, 60)])
       ++ "}"
     IO.println j
     return 0

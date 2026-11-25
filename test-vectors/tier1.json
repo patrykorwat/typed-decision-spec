@@ -76,7 +76,7 @@
     "argmax",
     "none"
   ],
-  "vectors_sha256": "7278f5eec1ee8630488b278b892dba311732f8349eea80c7a8f03448efc1e4a8",
+  "vectors_sha256": "63f6a820f204e6842c34c9e314b3769c9b4d5aaffbda56dd7802e1f8e6b7f206",
   "gate_calib_cases": [
     "none",
     "none",
@@ -134,5 +134,10 @@
     "alpha",
     "beta",
     "gamma"
-  ]
+  ],
+  "score_value": 84,
+  "score_conf": 20,
+  "score_gate": "none",
+  "score_gate_updated": "none",
+  "score_ev": 54
 }

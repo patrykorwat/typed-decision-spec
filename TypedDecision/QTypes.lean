@@ -264,4 +264,141 @@ theorem tieBinary_defers (τ : Pct) (h : 50 < τ) :
     have : tieBinary.response.conf = 50 := rfl
     rw [this]; exact h)
 
+/-! ## Score: a scalar-value contract (v1.5) -/
+
+theorem le100_30 : (30 : Nat) ≤ 100 := by omega
+theorem le100_55 : (55 : Nat) ≤ 100 := by omega
+theorem le100_85 : (85 : Nat) ≤ 100 := by omega
+
+/-- **A score prediction**: a value on the explicit [0, 100] scale plus
+a confidence in the Pct sense. THE TWO ARE DIFFERENT QUANTITIES — value
+is what the model predicts on the scale, confidence is how certain the
+model is of that prediction (a model may predict 85 with 55% certainty;
+see `value_differs_from_confidence`). -/
+structure ScoreResponse where
+  value : Pct
+  confidence : Pct
+  value_le_100 : value ≤ 100
+  conf_le_100 : confidence ≤ 100
+
+/-- Two witnesses of the score contract. -/
+def score85of55 : ScoreResponse :=
+  { value := 85, confidence := 55, value_le_100 := le100_85, conf_le_100 := le100_55 }
+
+def score30of55 : ScoreResponse :=
+  { value := 30, confidence := 55, value_le_100 := le100_30, conf_le_100 := le100_55 }
+
+/-- The value of the 85-of-55 witness. -/
+theorem score85of55_value : score85of55.value = 85 := rfl
+/-- The confidence of the 85-of-55 witness. -/
+theorem score85of55_conf : score85of55.confidence = 55 := rfl
+/-- The value of the 30-of-55 witness. -/
+theorem score30of55_value : score30of55.value = 30 := rfl
+
+/-- **The predicted value is not its certainty**: a well-formed score
+response whose value differs from its confidence. -/
+theorem value_differs_from_confidence :
+    score85of55.value ≠ score85of55.confidence := by
+  show (85 : Nat) ≠ 55
+  omega
+
+/-- **Confidence does not determine the value**: two well-formed score
+responses with the SAME confidence and DIFFERENT values. -/
+theorem same_conf_diff_value :
+    score30of55.confidence = score85of55.confidence
+      ∧ score30of55.value ≠ score85of55.value := by
+  refine ⟨rfl, ?_⟩
+  show (30 : Nat) ≠ 85
+  omega
+
+/-- The total weight of a score distribution. -/
+def distSum (dist : List (Nat × Nat)) : Nat := (dist.map Prod.snd).sum
+
+/-- **The expected value** of a score distribution on the [0, 100]
+scale: Σ value·weight / 100 (the weights are the integer core of a
+probability distribution). This is the mathematical definition the
+score contract commits to. -/
+def expectedValue (dist : List (Nat × Nat)) : Nat :=
+  (dist.map (fun p => p.1 * p.2)).sum / 100
+
+/-- Auxiliary bound: Σ v·w ≤ 100·Σ w whenever every value is ≤ 100. -/
+theorem mapPairSum_le (dist : List (Nat × Nat))
+    (hvals : ∀ p ∈ dist, p.1 ≤ 100) :
+    (dist.map (fun p => p.1 * p.2)).sum ≤ 100 * (dist.map Prod.snd).sum := by
+  induction dist with
+  | nil => simp
+  | cons p rest ih =>
+    have hmem : p ∈ p :: rest := List.mem_cons_self
+    have hp := hvals p hmem
+    have hmul : p.1 * p.2 ≤ 100 * p.2 := Nat.mul_le_mul_right p.2 hp
+    have hrest := ih (fun q hq => hvals q (List.mem_cons_of_mem p hq))
+    simp only [List.map_cons, List.sum_cons] at *
+    omega
+
+/-- **The expected value stays on the scale**: for a well-formed score
+distribution (every value ≤ 100, weights summing to 100), the expected
+value is ≤ 100. -/
+theorem expectedValue_le_100 (dist : List (Nat × Nat))
+    (hvals : ∀ p ∈ dist, p.1 ≤ 100) (hsum : distSum dist = 100) :
+    expectedValue dist ≤ 100 := by
+  show (dist.map (fun p => p.1 * p.2)).sum / 100 ≤ 100
+  have hproj : (dist.map Prod.snd).sum = 100 := hsum
+  have h := mapPairSum_le dist hvals
+  omega
+
+/-- A demo: the expected value of `[(30, 40), (70, 60)]` (weights 40+60)
+is 54 — closed computation, the definition is executable. -/
+theorem expectedValue_demo : expectedValue [(30, 40), (70, 60)] = 54 := rfl
+
+/-- The demo distribution's values are on the scale. -/
+theorem demoDist_vals : ∀ p ∈ ([(30, 40), (70, 60)]: List (Nat × Nat)), p.1 ≤ 100 := by
+  intro p hp
+  rcases List.mem_cons.mp hp with h | h
+  · subst h; omega
+  · rcases List.mem_cons.mp h with h2 | h2
+    · subst h2; omega
+    · exact absurd h2 (by simp)
+
+/-- The demo distribution's weights sum to 100. -/
+theorem demoDist_sum : distSum ([(30, 40), (70, 60)]: List (Nat × Nat)) = 100 := by
+  show (((30, 40) :: ([(70, 60)]: List (Nat × Nat))).map Prod.snd).sum = 100
+  simp
+
+/-- **The canonical score response from a distribution**: the predicted
+value IS the expected value of the distribution (proved on scale); the
+confidence is carried separately. -/
+def scoreOfDist (dist : List (Nat × Nat)) (c : Pct)
+    (hvals : ∀ p ∈ dist, p.1 ≤ 100) (hsum : distSum dist = 100)
+    (hc : c ≤ 100) : ScoreResponse :=
+  { value := expectedValue dist, confidence := c,
+    value_le_100 := expectedValue_le_100 dist hvals hsum, conf_le_100 := hc }
+
+/-- **A score calibration is its own object** — separate from the
+binary `Calib` (the score contract has its own threshold and scope;
+the QType is the type itself). -/
+structure ScoreCalib where
+  τ : Pct
+  certified : τ ≤ 100
+
+/-- **The score gate**: decide — with the predicted VALUE as payload —
+iff the response's confidence admits it; otherwise abstain. The payload
+is `r.value`, never `r.confidence`. -/
+def gateScore (c : ScoreCalib) (r : ScoreResponse) : Option Nat :=
+  if c.τ ≤ r.confidence then some r.value else none
+
+/-- **Below the score threshold the gate abstains** (mirror of
+`gate_conforming` for the score contract). -/
+theorem gateScore_defers_below (c : ScoreCalib) (r : ScoreResponse)
+    (h : r.confidence < c.τ) : gateScore c r = none := by
+  simp only [gateScore]
+  exact if_neg (Nat.not_le.mpr h)
+
+/-- **The payload is the predicted VALUE** — even though value and
+confidence are different quantities, the deciding gate returns the
+value (mirror of the score contract's decision shape). -/
+theorem gateScore_payload_is_value (c : ScoreCalib) (r : ScoreResponse)
+    (hdec : c.τ ≤ r.confidence) : gateScore c r = some r.value := by
+  simp only [gateScore]
+  rw [if_pos hdec]
+
 end QTypes
