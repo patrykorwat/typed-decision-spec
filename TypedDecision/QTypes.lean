@@ -504,18 +504,23 @@ theorem loops_are_metadata :
     ∃ (r : ScoreResponse), r.confidence = 55 ∧ r.confidenceLoopIdx = 5 := by
   exact ⟨score30of55, rfl, rfl⟩
 
-/-- **The score result of gating**: the payload/value pairing travels
-with the result — the mirror of `MultiDecisionResult` for the scalar
-contract. -/
+/-- **The score result of gating**: the decision plus BOTH loop indices —
+the response's confidence loop AND the calibration's bound loop — so the
+conf-loop ↔ calib-loop pairing travels with the result and a mismatch
+becomes visible in the value itself. -/
 structure ScoreDecisionResult where
   value : Option Nat
+  /-- The confidence loop of the response that was gated. -/
   confLoopIdx : Nat
+  /-- The loop the calibration was fitted at. -/
+  calibLoopIdx : Nat
 
-/-- Gating with the result carrying its provenance: the loop index in
-the result is the calibration's binding, so an adapter cannot lose the
-conf-loop ↔ calib-loop pairing. -/
+/-- Gating with the result carrying its provenance: both indices travel
+with the decision — the confidence loop from the response, the
+calibration loop from the calibration. -/
 def gateScoreResult (c : ScoreCalib) (r : ScoreResponse) : ScoreDecisionResult :=
-  { value := gateScore c r, confLoopIdx := r.confidenceLoopIdx }
+  { value := gateScore c r, confLoopIdx := r.confidenceLoopIdx,
+    calibLoopIdx := c.loopIdx }
 
 /-- The result's payload agrees with the plain gate. -/
 theorem gateScoreResult_value (c : ScoreCalib) (r : ScoreResponse) :
@@ -525,12 +530,18 @@ theorem gateScoreResult_value (c : ScoreCalib) (r : ScoreResponse) :
 theorem gateScoreResult_loop (c : ScoreCalib) (r : ScoreResponse) :
     (gateScoreResult c r).confLoopIdx = r.confidenceLoopIdx := rfl
 
-/-- **Separate per-label quantities**: the two 30-of-x witnesses carry
-the SAME value with DIFFERENT confidences (and vice versa in
-`same_conf_diff_value`) — neither quantity is a function of the other. -/
-theorem same_value_pair_differs2 :
-    score30of40.value = score30of70.value
-      ∧ score30of40.confidence ≠ score30of70.confidence :=
-  same_value_pair_differs
+/-- The result carries the calibration's own loop. -/
+theorem gateScoreResult_calibLoop (c : ScoreCalib) (r : ScoreResponse) :
+    (gateScoreResult c r).calibLoopIdx = c.loopIdx := rfl
+
+/-- **Classification:** `gateScoreResult` is the PUBLIC contract shape
+for gating results (the pairing travels with the decision); plain
+`gateScore` remains the internal helper. The README documents this. -/
+theorem gateScoreResult_is_public_shape (c : ScoreCalib) (r : ScoreResponse) :
+    (gateScoreResult c r).value = gateScore c r
+      ∧ (gateScoreResult c r).confLoopIdx = r.confidenceLoopIdx
+      ∧ (gateScoreResult c r).calibLoopIdx = c.loopIdx :=
+  ⟨gateScoreResult_value c r, gateScoreResult_loop c r,
+   gateScoreResult_calibLoop c r⟩
 
 end QTypes

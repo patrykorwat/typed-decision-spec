@@ -488,12 +488,14 @@ def test_multi_rejects() -> None:
 def _mirror_gate_score(calib_loop, conf_loop, conf, value):
     """Python mirror of gateScore: the payload is the VALUE (never the
     confidence); below the threshold or at a wrong loop the gate abstains.
-    Bounds are VALIDATED on the whole [0,100] scale (a response with
-    value or conf > 100 or < 0 is ill-formed — mirror of the structure's
-    `value_le_100`/`conf_le_100` over Nat; non-integer input is a type
-    error by itself)."""
-    if not (isinstance(value, int) and isinstance(conf, int)):
+    Fields must be STRICT integers (`type(x) is int` — bool is a subclass
+    of int in Python and is NOT accepted, mirror of Nat), validated on
+    the whole [0,100] scale in both directions; loop indices must be
+    integers too."""
+    if type(value) is not int or type(conf) is not int:
         raise TypeError("score fields must be integers (Nat)")
+    if type(calib_loop) is not int or type(conf_loop) is not int:
+        raise TypeError("loop indices must be integers (Nat)")
     if not 0 <= value <= 100 or not 0 <= conf <= 100:
         raise ValueError("ill-formed score response: value/confidence off the [0,100] scale")
     if calib_loop != conf_loop:
@@ -569,6 +571,16 @@ def test_score_rejects() -> None:
     # loop 5 matches, 54 < 75 ⇒ none) — compared with the frozen field
     assert V["score_gate_updated"] == "none"
     assert _mirror_gate_score(5, 5, 54, 54) is None
+    # TYPE rejections (TypeError — strict int, bool is NOT accepted):
+    # bool fields, float fields, string fields, and non-integer loop indices
+    for bad in ((5, 5, True, False), (5, 5, 85.0, 55), (5, 5, "85", 55),
+                (5.0, 5, 85, 55), (5, True, 85, 55)):
+        calib_loop, conf_loop, value, conf = bad
+        try:
+            _mirror_gate_score(calib_loop, conf_loop, conf, value)
+            raise AssertionError(f"non-integer field must raise TypeError: {bad}")
+        except TypeError:
+            pass
     # ILL-FORMED responses are rejected (validation, not silent acceptance):
     # value/conf > 100 or < 0 are off the scale — mirror of
     # value_le_100 / conf_le_100 over Nat

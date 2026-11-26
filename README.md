@@ -68,13 +68,16 @@ decision, recorded:** `confidenceLoopIdx` is *trusted adapter metadata*,
 not a proof of origin (`loops_are_metadata` exhibits a response with
 confidence 55 bound to loop 5 regardless of where the value came from);
 full provenance would need a loop-indexed type — deliberately deferred.
-`gateScoreResult` pairs the decision with its confidence loop so the
-pairing travels with the result. Python conformance: golden score from
-different loops, all gating branches mirrored three-way (none /
-payload=value / wrong-loop, frozen == Lean == Python), per-label
-distributions compared, ill-formed responses (out of scale in BOTH
-directions, and non-integers) rejected by validation, EV=54 demo with
-exact numerator 5400.
+**`gateScoreResult` is the public contract shape for gating results**
+(`gateScoreResult_is_public_shape`): it carries BOTH loop indices —
+the response's `confLoopIdx` AND the calibration's `calibLoopIdx` — so
+the pairing travels with the decision and a mismatch becomes visible in
+the value itself; plain `gateScore` stays the internal helper. Python
+conformance: golden score from different loops, all gating branches
+mirrored three-way (none / payload=value / wrong-loop, frozen == Lean ==
+Python), per-label distributions compared, ill-formed responses (out of
+scale in BOTH directions, non-integers including bool/float/str) rejected
+by validation, EV=54 demo with exact numerator 5400.
 
 For `act` and `tool` the semantics genuinely differ (expected-cost
 actions; agent next-step). A typed
