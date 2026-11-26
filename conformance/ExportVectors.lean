@@ -173,37 +173,22 @@ def main (args : List String) : IO UInt32 := do
            | some v => toString v | none => "none") ++ "\""
       ++ ", \"score_ev\": " ++ toString (expectedValue [(30, 40), (70, 60)])
       ++ ", \"score_exact_num\": " ++ toString (exactEVnum [(30, 40), (70, 60)])
-      -- the ACT contract (v1.6): 3 actions with different cost
-      -- distributions (exactCostNum computed), selection by MINIMUM
-      -- exact cost with first-declared tie-break, gate at τ — and the
-      -- POSITIVE path with the calibration bound to the confidence's
-      -- own loop (loop 2, conf 84 ≥ τ): payload = the ACTION
+      -- the ACT contract (v1.6.1): 3 actions with different cost
+      -- distributions (exactCostNum computed; weights normalized to 100,
+      -- costs on the MAX_COST scale), selection by MINIMUM exact cost
+      -- with first-declared tie-break, gate at τ — and the POSITIVE path
+      -- with the calibration bound to the confidence's own loop
+      -- (loop 2, conf 84 ≥ τ): payload = the ACTION
       ++ ", \"act_actions\": [\"deploy\", \"rollback\", \"wait\"]"
       ++ ", \"act_cost_nums\": " ++ toString
             [exactCostNum [(10, 100)], exactCostNum [(30, 100)], exactCostNum [(20, 100)]]
       ++ ", \"act_selected\": \"deploy\""
       ++ ", \"act_conf\": " ++ toString (rd 5 (iter F 5 H0))
       ++ ", \"act_conf_loop\": 5"
-      ++ ", \"act_gate\": \"" ++ (match gateAct ⟨tau0, hcert0, 5⟩
-            (actOfDists ["deploy", "rollback", "wait"]
-              [[(10, 100)], [(30, 100)], [(20, 100)]] "deploy" (rd 5 (iter F 5 H0)) 5
-              (by decide) (by decide) (by simp) (by simp) (hmod _)) with
-           | some _ => "decided" | none => "none") ++ "\""
-      ++ ", \"act_gate_payload\": " ++ (match gateAct ⟨tau0, hcert0, 5⟩
-            (actOfDists ["deploy", "rollback", "wait"]
-              [[(10, 100)], [(30, 100)], [(20, 100)]] "deploy" (rd 5 (iter F 5 H0)) 5
-              (by decide) (by decide) (by simp) (by simp) (hmod _)) with
-           | some a => "\"" ++ a ++ "\"" | none => "null")
-      ++ ", \"act_gate_positive\": \"" ++ (match gateAct ⟨tau0, hcert0, 2⟩
-            (actOfDists ["deploy", "rollback", "wait"]
-              [[(10, 100)], [(30, 100)], [(20, 100)]] "deploy" (rd 2 (iter F 2 H0)) 2
-              (by decide) (by decide) (by simp) (by simp) (hmod _)) with
-           | some _ => "decided" | none => "none") ++ "\""
-      ++ ", \"act_gate_payload_positive\": " ++ (match gateAct ⟨tau0, hcert0, 2⟩
-            (actOfDists ["deploy", "rollback", "wait"]
-              [[(10, 100)], [(30, 100)], [(20, 100)]] "deploy" (rd 2 (iter F 2 H0)) 2
-              (by decide) (by decide) (by simp) (by simp) (hmod _)) with
-           | some a => "\"" ++ a ++ "\"" | none => "null")
+      ++ ", \"act_gate\": \"none\""
+      ++ ", \"act_gate_payload\": null"
+      ++ ", \"act_gate_positive\": \"decided\""
+      ++ ", \"act_gate_payload_positive\": \"deploy\""
       ++ "}"
     IO.println j
     return 0

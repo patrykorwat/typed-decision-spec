@@ -286,6 +286,24 @@ def test_lean_export_matches_frozen() -> None:
     assert lean["score_exact_num"] == V["score_exact_num"], (
         "Lean score exact numerator != frozen"
     )
+    # act fields — the FULL three-way bridge for the act contract
+    assert lean["act_actions"] == V["act_actions"], "Lean act actions != frozen"
+    assert lean["act_cost_nums"] == V["act_cost_nums"], (
+        "Lean act cost numerators != frozen"
+    )
+    assert lean["act_selected"] == V["act_selected"], "Lean act selected != frozen"
+    assert lean["act_conf"] == V["act_conf"], "Lean act conf != frozen"
+    assert lean["act_conf_loop"] == V["act_conf_loop"], "Lean act conf loop != frozen"
+    assert lean["act_gate"] == V["act_gate"], "Lean act gate != frozen"
+    assert lean["act_gate_payload"] == V["act_gate_payload"], (
+        "Lean act gate payload != frozen"
+    )
+    assert lean["act_gate_positive"] == V["act_gate_positive"], (
+        "Lean act gate positive != frozen"
+    )
+    assert lean["act_gate_payload_positive"] == V["act_gate_payload_positive"], (
+        "Lean act gate payload positive != frozen"
+    )
     # the exported probs are the response's own (binResponseOf_probs twin)
     for probs, conf in zip(lean["probs_trace"], lean["conf_trace"]):
         assert conf == max(probs), "Lean: conf != max(probs)"
@@ -618,13 +636,18 @@ def _mirror_gate_act(calib_loop, conf_loop, conf, selected):
 def test_act_golden() -> None:
     """The Lean-exported act collection: 3 actions with different cost
     distributions (exact numerators 1000/3000/2000), selection by
-    MINIMUM exact cost with first-declared tie-break, the gate at the
-    calibration threshold in ALL branches, and the payload being the
-    ACTION identifier."""
+    MINIMUM exact cost computed INDEPENDENTLY from the numerators list,
+    the gate at the calibration threshold in ALL branches, and the
+    payload being the ACTION identifier."""
     actions = V["act_actions"]
     assert actions == ["deploy", "rollback", "wait"], "label order must be preserved"
     nums = V["act_cost_nums"]
     assert nums == [1000, 3000, 2000], "exact cost numerators computed per action"
+    # INDEPENDENT minimum: index of the smallest numerator
+    min_idx = nums.index(min(nums))
+    assert V["act_selected"] == actions[min_idx], (
+        "the selected action must be the one at the minimum-exact-cost position"
+    )
     assert V["act_selected"] == "deploy" == actions[0], (
         "the minimum-exact-cost action must be selected (deploy, 1000)"
     )

@@ -79,11 +79,21 @@ Python), per-label distributions compared, ill-formed responses (out of
 scale in BOTH directions, non-integers including bool/float/str) rejected
 by validation, EV=54 demo with exact numerator 5400.
 
-For `act` and `tool` the semantics genuinely differ (expected-cost
-actions; agent next-step). A typed
-`ResponseFor : QType → Type` remains the target; until then this contract makes
-no claim about those two types' payload semantics (their deferral
-semantics ARE covered by `Conforming` for every `QType`).
+For `act` and `tool` the semantics genuinely differ. **`act`** (as of
+v1.6.1) is formalized as the **expected-cost contract with enforced
+invariants**: `ActResponse` carries per-action cost distributions whose
+costs stay on the act scale (`costs_in_scale`), whose weights are
+normalized to 100 (`dists_normalized`), whose exact cost numerators
+EQUAL the computed map (`nums_eq_map` — "computed, never supplied" now
+holds for the whole type), and whose `selected` is a minimum of the
+exact numerators (`sel_min` over `actions.idxOf`) — a caller cannot
+silently select an expensive action. `ActCalib.τ` is a **confidence
+threshold** (`threshold_le_100`, ≤ 100 — the gate compares τ with
+`r.confidence`, never with a cost; MAX_COST is a separate notion).
+`gateAct` decides with the action as payload and abstains on wrong
+loop and below threshold. **`tool`** remains deferred (agent next-step).
+A typed `ResponseFor : QType → Type` remains the target for unifying
+all six.
 
 ## Proof audit (v1.4.2)
 

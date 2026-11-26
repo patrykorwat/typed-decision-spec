@@ -609,9 +609,12 @@ theorem floor_loses_information :
   have h2 : exactCostNum [(4, 20)] = 80 := rfl
   omega
 
-/-- The act response: a well-formed cost distribution per action, an
-EXACT COST numerator list (computed), a confidence with its source
-loop, and the SELECTED action (an identifier from the vocabulary). -/
+/-- The act response: per-action cost distributions (each with a PROVED
+normalized weight sum and in-scale costs), the exact cost numerators
+EQUAL to the computed map (`nums_eq_map`), the SELECTED action which IS
+the minimal-exact-cost one (`sel_min` over `actions.idxOf`), a
+confidence with its source loop. Well-formedness a caller could
+otherwise silently violate is enforced by the type. -/
 structure ActResponse where
   actions : List String
   costDists : List (List (Nat × Nat))
@@ -623,21 +626,43 @@ structure ActResponse where
   actions_nonempty : actions ≠ []
   len_match : costDists.length = actions.length
   nums_match : exactCostNums.length = actions.length
+  /-- The numerators are the COMPUTED ones — "computed, never supplied"
+  holds for the whole type, not just the constructor. -/
+  nums_eq_map : exactCostNums = costDists.map exactCostNum
+  /-- Every cost in every distribution stays on the act scale. -/
+  costs_in_scale : ∀ x ∈ costDists, ∀ p ∈ x, p.1 ≤ MAX_COST
+  /-- Every cost distribution's weights sum to 100 (normalized). -/
+  dists_normalized : ∀ x ∈ costDists, distCostSum x = 100
+  /-- The selected action is a MINIMUM of the exact cost numerators
+  over the actions (in order). -/
+  sel_min : ∀ i (_ : i < actions.length),
+    exactCostNums[i]! ≥ exactCostNums[actions.idxOf selected]!
   sel_mem : selected ∈ actions
   conf_le_100 : confidence ≤ 100
 
 /-- Build an act response from per-action cost distributions: the exact
-cost numerators are COMPUTED (`List.map exactCostNum`), never supplied. -/
+cost numerators are COMPUTED (`List.map exactCostNum`), never supplied;
+the caller must certify scale and normalization per distribution and
+supply a selection consistent with the minimality invariant. -/
 def actOfDists (actions : List String) (costDists : List (List (Nat × Nat)))
     (selected : String) (c : Pct) (loopIdx : Nat)
     (hnd : actions.Nodup) (hne : actions ≠ [])
     (hlen : costDists.length = actions.length)
+    (hinscale : ∀ x ∈ costDists, ∀ p ∈ x, p.1 ≤ MAX_COST)
+    (hnorm : ∀ x ∈ costDists, distCostSum x = 100)
+    (hmin : ∀ i (_ : i < actions.length),
+      (costDists.map exactCostNum)[i]! ≥
+        (costDists.map exactCostNum)[actions.idxOf selected]!)
     (hmem : selected ∈ actions) (hc : c ≤ 100) : ActResponse :=
   { actions := actions, costDists := costDists,
     exactCostNums := costDists.map exactCostNum,
     selected := selected, confidence := c, confidenceLoopIdx := loopIdx,
     actions_nodup := hnd, actions_nonempty := hne, len_match := hlen,
     nums_match := by rw [List.length_map]; exact hlen,
+    nums_eq_map := rfl,
+    costs_in_scale := hinscale,
+    dists_normalized := hnorm,
+    sel_min := hmin,
     sel_mem := hmem, conf_le_100 := hc }
 
 /-- **An act calibration is its own object**: threshold on the act scale
