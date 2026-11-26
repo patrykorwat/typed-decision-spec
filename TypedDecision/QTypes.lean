@@ -277,7 +277,10 @@ theorem tieBinary_defers (τ : Pct) (h : 50 < τ) :
 theorem le100_30 : (30 : Nat) ≤ 100 := by omega
 theorem le100_55 : (55 : Nat) ≤ 100 := by omega
 theorem le100_85 : (85 : Nat) ≤ 100 := by omega
-
+theorem le100_10 : (10 : Nat) ≤ 100 := by omega
+theorem le100_20 : (20 : Nat) ≤ 100 := by omega
+theorem le100_40 : (40 : Nat) ≤ 100 := by omega
+theorem le100_70 : (70 : Nat) ≤ 100 := by omega
 /-- **A score prediction**: a value on the explicit [0, 100] scale plus
 a confidence in the Pct sense. THE TWO ARE SEPARATE QUANTITIES — the
 value is what the model predicts on the scale, the confidence is how
@@ -469,9 +472,6 @@ theorem gateScore_payload_is_value (c : ScoreCalib) (r : ScoreResponse)
   simp only [gateScore]
   rw [if_pos (by exact ⟨hloop, hdec⟩)]
 
-theorem le100_40 : (40 : Nat) ≤ 100 := by omega
-theorem le100_70 : (70 : Nat) ≤ 100 := by omega
-
 def score30of40 : ScoreResponse :=
   { value := 30, confidence := 40, confidenceLoopIdx := 2,
     value_le_100 := le100_30, conf_le_100 := le100_40 }
@@ -566,28 +566,30 @@ theorem gateScoreResult_is_public_shape (c : ScoreCalib) (r : ScoreResponse) :
 /-- The MAX_COST of the act contract's scale. -/
 def MAX_COST : Nat := 100
 
-/-- A single cost–weight pair on the act scale. -/
+/-- A single cost–weight entry on the act scale: the cost CARRIES its own
+scale proof (`cost_le_max`), so an out-of-scale cost is unrepresentable
+at the entry level — no separate well-formedness obligation for callers. -/
 structure CostEntry where
   cost : Nat
   weight : Nat
   cost_le_max : cost ≤ MAX_COST
 
 /-- The total weight of a cost distribution. -/
-def distCostSum (dist : List (Nat × Nat)) : Nat := (dist.map Prod.snd).sum
+def distCostSum (dist : List CostEntry) : Nat := (dist.map (fun e => e.weight)).sum
 
 /-- **The exact cost numerator**: Σ cost·weight — the rational expected
 cost is `exactCostNum dist / 100`, NO truncation. -/
-def exactCostNum (dist : List (Nat × Nat)) : Nat :=
-  (dist.map (fun p => p.1 * p.2)).sum
+def exactCostNum (dist : List CostEntry) : Nat :=
+  (dist.map (fun e => e.cost * e.weight)).sum
 
 /-- **The integer expected cost**: the FLOOR of the exact rational
 expected cost `exactCostNum dist / 100` (`Nat` division truncates).
 NEVER use this for selection — the floor is lossy. -/
-def expectedCost (dist : List (Nat × Nat)) : Nat :=
+def expectedCost (dist : List CostEntry) : Nat :=
   exactCostNum dist / 100
 
 /-- The floor bound for costs, mirror of `expectedValue_floor`. -/
-theorem expectedCost_floor (dist : List (Nat × Nat)) :
+theorem expectedCost_floor (dist : List CostEntry) :
     100 * expectedCost dist ≤ exactCostNum dist
       ∧ exactCostNum dist ≤ 100 * expectedCost dist + 99 := by
   have hdm := Nat.div_add_mod (exactCostNum dist) 100
@@ -597,27 +599,32 @@ theorem expectedCost_floor (dist : List (Nat × Nat)) :
   omega
 
 /-- **Selection by the EXACT cost, not the floor**: a concrete witness —
-actions `a` (exact cost 50: distribution `[(1, 50)]`) and `b` (exact
-cost 80: `[(4, 20)]`) have the SAME floor `expectedCost = 0` but
-DIFFERENT exact numerators (50 vs 80); selecting on the floor could not
-distinguish them. The contract therefore selects on `exactCostNum`. -/
+actions `a` (exact cost 100: distribution `[(1, 50), (1, 50)]`) and `b`
+(exact cost 150: `[(3, 50), (0, 50)]`) — BOTH normalized (weights sum
+to 100) — have the SAME floor `expectedCost = 1` but DIFFERENT exact
+numerators (100 vs 150); selecting on the floor could not distinguish
+them. The contract therefore selects on `exactCostNum`. -/
 theorem floor_loses_information :
-    expectedCost [(1, 50)] = expectedCost [(4, 20)]
-      ∧ exactCostNum [(1, 50)] ≠ exactCostNum [(4, 20)] := by
+    expectedCost [⟨1, 50, by decide⟩, ⟨1, 50, by decide⟩]
+      = expectedCost [⟨3, 50, by decide⟩, ⟨0, 50, by decide⟩]
+      ∧ exactCostNum [⟨1, 50, by decide⟩, ⟨1, 50, by decide⟩]
+        ≠ exactCostNum [⟨3, 50, by decide⟩, ⟨0, 50, by decide⟩] := by
   refine ⟨rfl, ?_⟩
-  have h1 : exactCostNum [(1, 50)] = 50 := rfl
-  have h2 : exactCostNum [(4, 20)] = 80 := rfl
+  have h1 : exactCostNum [⟨1, 50, by decide⟩, ⟨1, 50, by decide⟩] = 100 := rfl
+  have h2 : exactCostNum [⟨3, 50, by decide⟩, ⟨0, 50, by decide⟩] = 150 := rfl
   omega
 
-/-- The act response: per-action cost distributions (each with a PROVED
-normalized weight sum and in-scale costs), the exact cost numerators
-EQUAL to the computed map (`nums_eq_map`), the SELECTED action which IS
-the minimal-exact-cost one (`sel_min` over `actions.idxOf`), a
+/-- **The act response**: per-action cost distributions (each entry
+CARRIES its own scale proof via `CostEntry.cost_le_max`; each
+distribution with a PROVED normalized weight sum), the exact cost
+numerators EQUAL to the computed map (`nums_eq_map`), the SELECTED
+action which IS the minimal-exact-cost one (`sel_min` over
+`actions.idxOf`) and the FIRST-DECLARED among minima (`sel_first`), a
 confidence with its source loop. Well-formedness a caller could
 otherwise silently violate is enforced by the type. -/
 structure ActResponse where
   actions : List String
-  costDists : List (List (Nat × Nat))
+  costDists : List (List CostEntry)
   exactCostNums : List Nat
   selected : String
   confidence : Pct
@@ -629,30 +636,42 @@ structure ActResponse where
   /-- The numerators are the COMPUTED ones — "computed, never supplied"
   holds for the whole type, not just the constructor. -/
   nums_eq_map : exactCostNums = costDists.map exactCostNum
-  /-- Every cost in every distribution stays on the act scale. -/
-  costs_in_scale : ∀ x ∈ costDists, ∀ p ∈ x, p.1 ≤ MAX_COST
-  /-- Every cost distribution's weights sum to 100 (normalized). -/
+  /-- Every cost distribution's weights sum to 100 (normalized). In-scale
+  costs need no separate invariant: each `CostEntry` carries its own
+  `cost_le_max`. -/
   dists_normalized : ∀ x ∈ costDists, distCostSum x = 100
   /-- The selected action is a MINIMUM of the exact cost numerators
-  over the actions (in order). -/
+  over the actions (in order): the numerator at the selected position
+  (first declared among minima) is a lower bound for every other. -/
   sel_min : ∀ i (_ : i < actions.length),
     exactCostNums[i]! ≥ exactCostNums[actions.idxOf selected]!
+  /-- **First-declared among minima**: any action whose exact cost
+  TIES with the selected one cannot come earlier in the declaration
+  order. Together with `sel_min` this pins the first-declared
+  tie-break rule. -/
+  sel_first : ∀ i (_ : i < actions.length),
+    exactCostNums[i]! = exactCostNums[actions.idxOf selected]! →
+      i ≥ actions.idxOf selected
   sel_mem : selected ∈ actions
   conf_le_100 : confidence ≤ 100
 
 /-- Build an act response from per-action cost distributions: the exact
 cost numerators are COMPUTED (`List.map exactCostNum`), never supplied;
-the caller must certify scale and normalization per distribution and
-supply a selection consistent with the minimality invariant. -/
-def actOfDists (actions : List String) (costDists : List (List (Nat × Nat)))
+the caller must certify normalization, minimality AND the first-declared
+rule (costs need no certificate — each `CostEntry` carries its own
+scale proof). -/
+def actOfDists (actions : List String) (costDists : List (List CostEntry))
     (selected : String) (c : Pct) (loopIdx : Nat)
     (hnd : actions.Nodup) (hne : actions ≠ [])
     (hlen : costDists.length = actions.length)
-    (hinscale : ∀ x ∈ costDists, ∀ p ∈ x, p.1 ≤ MAX_COST)
     (hnorm : ∀ x ∈ costDists, distCostSum x = 100)
     (hmin : ∀ i (_ : i < actions.length),
       (costDists.map exactCostNum)[i]! ≥
         (costDists.map exactCostNum)[actions.idxOf selected]!)
+    (hfirst : ∀ i (_ : i < actions.length),
+      (costDists.map exactCostNum)[i]! =
+        (costDists.map exactCostNum)[actions.idxOf selected]! →
+        i ≥ actions.idxOf selected)
     (hmem : selected ∈ actions) (hc : c ≤ 100) : ActResponse :=
   { actions := actions, costDists := costDists,
     exactCostNums := costDists.map exactCostNum,
@@ -660,17 +679,19 @@ def actOfDists (actions : List String) (costDists : List (List (Nat × Nat)))
     actions_nodup := hnd, actions_nonempty := hne, len_match := hlen,
     nums_match := by rw [List.length_map]; exact hlen,
     nums_eq_map := rfl,
-    costs_in_scale := hinscale,
     dists_normalized := hnorm,
     sel_min := hmin,
+    sel_first := hfirst,
     sel_mem := hmem, conf_le_100 := hc }
 
-/-- **An act calibration is its own object**: threshold on the act scale
-(≤ MAX_COST), plus the loop it was fitted at. `threshold_le_max` is ONLY
-the structural scale bound. -/
+/-- **An act calibration is its own object**: threshold is a
+CONFIDENCE threshold (`threshold_le_100`, ≤ 100 — the gate compares τ
+with `r.confidence`, not with any cost), plus the loop it was fitted
+at. The cost scale (`MAX_COST`) is a separate notion and is NOT bound
+here. -/
 structure ActCalib where
   τ : Pct
-  threshold_le_max : τ ≤ MAX_COST
+  threshold_le_100 : τ ≤ 100
   loopIdx : Nat
 
 /-- **The act gate**: decide — with the SELECTED ACTION as payload —
@@ -702,5 +723,98 @@ theorem gateAct_payload_is_action (c : ActCalib) (r : ActResponse)
     gateAct c r = some r.selected := by
   simp only [gateAct]
   rw [if_pos (by exact ⟨hloop, hdec⟩)]
+
+/-- The demo act distributions: deploy (exact numerator 1000), rollback
+(3000) and wait (2000) — each a normalized singleton on the act scale. -/
+def dDeploy : List CostEntry := [⟨10, 100, le100_10⟩]
+def dRollback : List CostEntry := [⟨30, 100, le100_30⟩]
+def dWait : List CostEntry := [⟨20, 100, le100_20⟩]
+def demoDists : List (List CostEntry) := [dDeploy, dRollback, dWait]
+
+/-- The demo TIE distributions: TWO actions with the SAME exact numerator
+3000 (`dRollback` and `dTieB`) — the first-declared one must win. -/
+def dTieB : List CostEntry := [⟨30, 100, le100_30⟩]
+def tieDists : List (List CostEntry) := [dRollback, dTieB]
+
+/-- The demo distributions are normalized (weights sum to 100). -/
+theorem demoNorm : ∀ x ∈ demoDists, distCostSum x = 100 := by
+  intro x hx
+  rcases List.mem_cons.mp hx with h | h
+  · subst h; rfl
+  · rcases List.mem_cons.mp h with h2 | h2
+    · subst h2; rfl
+    · rcases List.mem_cons.mp h2 with h3 | h3
+      · subst h3; rfl
+      · exact absurd h3 (by simp)
+
+/-- The demo selection satisfies the minimality invariant (deploy at
+index 0 has exact cost 1000, the minimum of 1000/3000/2000). -/
+theorem demoSel_min3 :
+    ∀ i (_ : i < List.length (["deploy", "rollback", "wait"] : List String)),
+      (demoDists.map exactCostNum)[i]! ≥
+        (demoDists.map exactCostNum)[List.idxOf "deploy"
+          (["deploy", "rollback", "wait"] : List String)]! := by
+  intro i hi
+  have hi3 : i < 3 := by simp at hi; omega
+  have hidx : List.idxOf "deploy" (["deploy", "rollback", "wait"] : List String) = 0 := by
+    simp
+  rw [hidx]
+  match i with
+  | 0 => exact Nat.le_refl _
+  | 1 => show (3000 : Nat) ≥ 1000; omega
+  | 2 => show (2000 : Nat) ≥ 1000; omega
+  | n + 3 => omega
+
+/-- The demo selection is FIRST-DECLARED among minima: `deploy` sits at
+index 0, so any action tying with it cannot come earlier. -/
+theorem demoSel_first3 :
+    ∀ i (_ : i < List.length (["deploy", "rollback", "wait"] : List String)),
+      (demoDists.map exactCostNum)[i]! =
+        (demoDists.map exactCostNum)[List.idxOf "deploy"
+          (["deploy", "rollback", "wait"] : List String)]! →
+        i ≥ List.idxOf "deploy" (["deploy", "rollback", "wait"] : List String) := by
+  intro i _ _
+  have h0 : List.idxOf "deploy" (["deploy", "rollback", "wait"] : List String) = 0 := by
+    simp
+  omega
+
+/-- The demo tie distributions are normalized (weights sum to 100). -/
+theorem demoTieNorm : ∀ x ∈ tieDists, distCostSum x = 100 := by
+  intro x hx
+  rcases List.mem_cons.mp hx with h | h
+  · subst h; rfl
+  · rcases List.mem_cons.mp h with h2 | h2
+    · subst h2; rfl
+    · exact absurd h2 (by simp)
+
+/-- The tie selection satisfies minimality trivially: BOTH numerators are
+3000, so the first-declared (`rollback`, index 0) is a minimum. -/
+theorem demoTieMin :
+    ∀ i (_ : i < List.length (["rollback", "wait"] : List String)),
+      (tieDists.map exactCostNum)[i]! ≥
+        (tieDists.map exactCostNum)[List.idxOf "rollback"
+          (["rollback", "wait"] : List String)]! := by
+  intro i hi
+  have hi2 : i < 2 := by simp at hi; omega
+  have hidx : List.idxOf "rollback" (["rollback", "wait"] : List String) = 0 := by
+    simp
+  rw [hidx]
+  match i with
+  | 0 => exact Nat.le_refl _
+  | 1 => show (3000 : Nat) ≥ 3000; omega
+  | n + 2 => omega
+
+/-- The tie selection is FIRST-DECLARED among minima: `rollback` sits at
+index 0, so any action tying with it cannot come earlier. -/
+theorem demoTieFirst :
+    ∀ i (_ : i < List.length (["rollback", "wait"] : List String)),
+      (tieDists.map exactCostNum)[i]! =
+        (tieDists.map exactCostNum)[List.idxOf "rollback"
+          (["rollback", "wait"] : List String)]! →
+        i ≥ List.idxOf "rollback" (["rollback", "wait"] : List String) := by
+  intro i _ _
+  have h0 : List.idxOf "rollback" (["rollback", "wait"] : List String) = 0 := by
+    simp
+  omega
 
 end QTypes

@@ -80,28 +80,44 @@ scale in BOTH directions, non-integers including bool/float/str) rejected
 by validation, EV=54 demo with exact numerator 5400.
 
 For `act` and `tool` the semantics genuinely differ. **`act`** (as of
-v1.6.1) is formalized as the **expected-cost contract with enforced
+v1.6.2) is formalized as the **expected-cost contract with enforced
 invariants**: `ActResponse` carries per-action cost distributions whose
-costs stay on the act scale (`costs_in_scale`), whose weights are
-normalized to 100 (`dists_normalized`), whose exact cost numerators
-EQUAL the computed map (`nums_eq_map` — "computed, never supplied" now
-holds for the whole type), and whose `selected` is a minimum of the
-exact numerators (`sel_min` over `actions.idxOf`) — a caller cannot
-silently select an expensive action. `ActCalib.τ` is a **confidence
-threshold** (`threshold_le_100`, ≤ 100 — the gate compares τ with
-`r.confidence`, never with a cost; MAX_COST is a separate notion).
-`gateAct` decides with the action as payload and abstains on wrong
-loop and below threshold. **`tool`** remains deferred (agent next-step).
+entries are `CostEntry`s — each cost CARRIES its own scale proof
+(`cost_le_max`, so an out-of-scale cost is unrepresentable at the entry
+level; no separate caller obligation) — whose weights are normalized to
+100 (`dists_normalized`), whose exact cost numerators EQUAL the
+computed map (`nums_eq_map` — "computed, never supplied" holds for the
+whole type), and whose `selected` is a minimum of the exact numerators
+AND first-declared among minima (`sel_min` + `sel_first` over
+`actions.idxOf` — a caller cannot silently select an expensive action,
+and a tie cannot be resolved toward a later declaration). `ActCalib.τ`
+is a **confidence threshold** (`threshold_le_100`, ≤ 100 — the gate
+compares τ with `r.confidence`, never with a cost; MAX_COST is a
+separate notion). `gateAct` decides with the action as payload and
+abstains on wrong loop and below threshold. The tie-break is a PROVED
+obligation, not prose: the export builds a tied response through
+`actOfDists` (two actions with the same exact numerator 3000) and the
+frozen tie vector crosses the whole Lean → frozen → Python bridge
+(`act_tie_*`), with the Python golden test deriving the expected winner
+independently (`nums.index(min(nums))` — the FIRST minimum). The
+floor-lossy witness is normalized (`floor_loses_information`:
+[(1,50),(1,50)] exact 100 vs [(3,50),(0,50)] exact 150 — same floor 1,
+different numerators, weights summing to 100 on both sides). Every
+exported act gate result is COMPUTED by `gateAct` over the constructed
+response — no literal gate values. The Python mirror rejects negative
+loop indices (mirror of `Nat` semantics). **`tool`** remains deferred
+(agent next-step).
 A typed `ResponseFor : QType → Type` remains the target for unifying
 all six.
 
-## Proof audit (v1.4.2)
+## Proof audit (current as of v1.6.2)
 
-All 25 declarations of the library (`Basic`, `Defer`, `Loop`, `QTypes`)
-were checked with `#print axioms`: every dependency set is a subset of
+All 149 top-level declarations of the library (`Basic`, `Defer`,
+`Loop`, `QTypes`) were checked with `#print axioms`: every dependency
+set is a subset of
 `[propext, Quot.sound, Classical.choice]` — **no `sorryAx`, no new
 axioms**. Zero `sorry`/`admit` in any module. Full `lake build` PASS;
-full conformance suite (16 tests, INCLUDING the Lean export — no
+full conformance suite (20 tests, INCLUDING the Lean export — no
 `--fast`) passes with exit 0; both CI jobs green. Scope boundary: the
 formal claims are the ones named in this README; conformance tests
 mirror them in Python and are differential (frozen == Lean == Python).

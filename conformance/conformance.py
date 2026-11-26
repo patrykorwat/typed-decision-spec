@@ -304,6 +304,22 @@ def test_lean_export_matches_frozen() -> None:
     assert lean["act_gate_payload_positive"] == V["act_gate_payload_positive"], (
         "Lean act gate payload positive != frozen"
     )
+    # the TIE-BREAK vector — computed fields through the same bridge
+    assert lean["act_tie_actions"] == V["act_tie_actions"], (
+        "Lean act tie actions != frozen"
+    )
+    assert lean["act_tie_cost_nums"] == V["act_tie_cost_nums"], (
+        "Lean act tie cost numerators != frozen"
+    )
+    assert lean["act_tie_selected"] == V["act_tie_selected"], (
+        "Lean act tie selected != frozen"
+    )
+    assert lean["act_tie_gate_positive"] == V["act_tie_gate_positive"], (
+        "Lean act tie gate positive != frozen"
+    )
+    assert lean["act_tie_gate_payload_positive"] == V["act_tie_gate_payload_positive"], (
+        "Lean act tie gate payload positive != frozen"
+    )
     # the exported probs are the response's own (binResponseOf_probs twin)
     for probs, conf in zip(lean["probs_trace"], lean["conf_trace"]):
         assert conf == max(probs), "Lean: conf != max(probs)"
@@ -620,14 +636,17 @@ def test_score_rejects() -> None:
 def _mirror_gate_act(calib_loop, conf_loop, conf, selected):
     """Python mirror of gateAct: the payload is the SELECTED ACTION
     (never a cost, never the confidence); below the threshold or at a
-    wrong loop the gate abstains. Bounds validated on the act scale
-    (mirror of `threshold_le_max`, `conf_le_100`) and strict-integer
-    fields (mirror of Nat)."""
+    wrong loop the gate abstains. Confidence validated on the [0,100]
+    scale (mirror of `conf_le_100`; the calibration's own bound is
+    `threshold_le_100`), and strict-integer fields (mirror of Nat —
+    negative loop indices are NOT silently accepted)."""
     if not (isinstance(selected, str) and type(conf) is int
             and type(calib_loop) is int and type(conf_loop) is int):
         raise TypeError("act fields must be (str, int, int, int)")
     if not 0 <= conf <= 100:
         raise ValueError("ill-formed act response: confidence off the [0,100] scale")
+    if calib_loop < 0 or conf_loop < 0:
+        raise ValueError("ill-formed act response: negative loop index (mirror of Nat)")
     if calib_loop != conf_loop:
         return None
     return selected if tau_le(conf, calib_tau) else None
@@ -651,11 +670,28 @@ def test_act_golden() -> None:
     assert V["act_selected"] == "deploy" == actions[0], (
         "the minimum-exact-cost action must be selected (deploy, 1000)"
     )
+    # TIE-BREAK: with EQUAL numerators the FIRST-declared action wins;
+    # index() returns the FIRST minimum — the first-declared rule,
+    # derived independently from the exported tie numerators
+    tie_actions = V["act_tie_actions"]
+    tie_nums = V["act_tie_cost_nums"]
+    assert tie_actions == ["rollback", "wait"], "the tie case must have two actions"
+    assert tie_nums == [3000, 3000], "the tie case must tie on the exact numerator"
+    assert V["act_tie_selected"] == tie_actions[tie_nums.index(min(tie_nums))], (
+        "with equal numerators the FIRST-declared action must be selected"
+    )
+    assert V["act_tie_selected"] == "rollback", "rollback (declared first) wins the tie"
     # positive path: calib bound to loop 2, confidence from loop 2 (84 >= 75)
     assert V["act_gate_positive"] == "decided", "positive path must decide"
     assert V["act_gate_payload_positive"] == "deploy", (
         "the payload must be the ACTION identifier, not a cost and not the confidence"
     )
+    # the deciding gate on the TIED response returns the SELECTED ACTION
+    assert V["act_tie_gate_positive"] == "decided", "the tie gate must decide (84 >= tau)"
+    assert V["act_tie_gate_payload_positive"] == "rollback", (
+        "the tie payload must be the SELECTED (first-declared) action"
+    )
+    assert _mirror_gate_act(2, 2, 84, "rollback") == "rollback"
     # the mirror agrees on the positive path
     assert _mirror_gate_act(2, 2, 84, "deploy") == "deploy"
     # abstention: calib at loop 5, conf 20 < 75
@@ -673,7 +709,8 @@ def test_act_rejects() -> None:
     the deciding payload is the ACTION, never a cost or the confidence
     (gateAct_payload_is_action); wrong loop abstains
     (gateAct_wrong_loop_never_decides); ill-formed responses —
-    non-integer fields, confidence off the scale, non-string action —
+    non-integer fields, confidence off the scale, negative loop
+    indices, non-string action —
     are REJECTED by validation."""
     tau = CALIBRATION_THRESHOLD
     # deferral below threshold — even for an attractive action
@@ -698,6 +735,15 @@ def test_act_rejects() -> None:
         try:
             _mirror_gate_act(calib_loop, conf_loop, conf, selected)
             raise AssertionError(f"ill-formed conf must raise ValueError: {bad}")
+        except ValueError:
+            pass
+    # ILL-FORMED: NEGATIVE loop indices — mirror of Nat semantics, never
+    # silently accepted
+    for bad in ((-1, 2, 84, "deploy"), (2, -1, 84, "deploy")):
+        calib_loop, conf_loop, conf, selected = bad
+        try:
+            _mirror_gate_act(calib_loop, conf_loop, conf, selected)
+            raise AssertionError(f"negative loop index must raise ValueError: {bad}")
         except ValueError:
             pass
     # non-string action (mirror of the vocabulary type)

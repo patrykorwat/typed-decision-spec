@@ -76,7 +76,7 @@
     "argmax",
     "none"
   ],
-  "vectors_sha256": "adbebde32c5ba8aaf591ba13680317d1425d2c942c2462897520740224e09073",
+  "vectors_sha256": "4452e4399d01b96b563ab8586bcf023b07e889a5f49a792bddcd267a9b98aa28",
   "gate_calib_cases": [
     "none",
     "none",
@@ -161,5 +161,16 @@
   "act_gate": "none",
   "act_gate_payload": null,
   "act_gate_positive": "decided",
-  "act_gate_payload_positive": "deploy"
+  "act_gate_payload_positive": "deploy",
+  "act_tie_actions": [
+    "rollback",
+    "wait"
+  ],
+  "act_tie_cost_nums": [
+    3000,
+    3000
+  ],
+  "act_tie_selected": "rollback",
+  "act_tie_gate_positive": "decided",
+  "act_tie_gate_payload_positive": "rollback"
 }

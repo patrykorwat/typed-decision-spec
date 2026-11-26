@@ -121,6 +121,18 @@ def main (args : List String) : IO UInt32 := do
     let mGatesU := ((gateMulti TAU mU).decisions.map
       (fun d => match d with | some _ => "\"argmax\"" | none => "\"none\"")).toString
     let mLabelsU := (["alpha", "beta", "gamma"].map (fun s => "\"" ++ s ++ "\"")).toString
+    -- the ACT responses, CONSTRUCTED via actOfDists (the caller must
+    -- discharge hnorm/hmin/hfirst — the tie-break is a PROVED obligation,
+    -- not prose); confidences carry the readout's own ≤100 proof (hmod)
+    let actResp := actOfDists ["deploy", "rollback", "wait"] demoDists "deploy"
+      (rd 5 (iter F 5 H0)) 5 (by decide) (by decide) (by decide)
+      demoNorm demoSel_min3 demoSel_first3 (by simp) (hmod _)
+    let actRespPos := actOfDists ["deploy", "rollback", "wait"] demoDists "deploy"
+      (rd 2 (iter F 2 H0)) 2 (by decide) (by decide) (by decide)
+      demoNorm demoSel_min3 demoSel_first3 (by simp) (hmod _)
+    let actRespTie := actOfDists ["rollback", "wait"] tieDists "rollback"
+      (rd 2 (iter F 2 H0)) 2 (by decide) (by decide) (by decide)
+      demoTieNorm demoTieMin demoTieFirst (by simp) (hmod _)
     -- List String toString drops the quotes; re-add them for valid JSON
     let gatesQ := toString (gates.map (fun s => "\"" ++ s ++ "\""))
     let labelsQ := toString (["alpha", "beta", "gamma"].map (fun s => "\"" ++ s ++ "\""))
@@ -173,22 +185,38 @@ def main (args : List String) : IO UInt32 := do
            | some v => toString v | none => "none") ++ "\""
       ++ ", \"score_ev\": " ++ toString (expectedValue [(30, 40), (70, 60)])
       ++ ", \"score_exact_num\": " ++ toString (exactEVnum [(30, 40), (70, 60)])
-      -- the ACT contract (v1.6.1): 3 actions with different cost
-      -- distributions (exactCostNum computed; weights normalized to 100,
-      -- costs on the MAX_COST scale), selection by MINIMUM exact cost
-      -- with first-declared tie-break, gate at τ — and the POSITIVE path
-      -- with the calibration bound to the confidence's own loop
-      -- (loop 2, conf 84 ≥ τ): payload = the ACTION
-      ++ ", \"act_actions\": [\"deploy\", \"rollback\", \"wait\"]"
-      ++ ", \"act_cost_nums\": " ++ toString
-            [exactCostNum [(10, 100)], exactCostNum [(30, 100)], exactCostNum [(20, 100)]]
-      ++ ", \"act_selected\": \"deploy\""
-      ++ ", \"act_conf\": " ++ toString (rd 5 (iter F 5 H0))
-      ++ ", \"act_conf_loop\": 5"
-      ++ ", \"act_gate\": \"none\""
-      ++ ", \"act_gate_payload\": null"
-      ++ ", \"act_gate_positive\": \"decided\""
-      ++ ", \"act_gate_payload_positive\": \"deploy\""
+      -- the ACT contract (v1.6.2): 3 actions with different cost
+      -- distributions (each entry a CostEntry with its own scale proof;
+      -- weights normalized to 100), selection by MINIMUM exact cost with
+      -- the FIRST-DECLARED tie-break (sel_first) — the responses are
+      -- CONSTRUCTED via actOfDists and every gate result is COMPUTED by
+      -- gateAct, never a literal
+      ++ ", \"act_actions\": " ++ toString (["deploy", "rollback", "wait"].map (fun s => "\"" ++ s ++ "\""))
+      ++ ", \"act_cost_nums\": " ++ toString actResp.exactCostNums
+      ++ ", \"act_selected\": \"" ++ actResp.selected ++ "\""
+      ++ ", \"act_conf\": " ++ toString actResp.confidence
+      ++ ", \"act_conf_loop\": " ++ toString actResp.confidenceLoopIdx
+      ++ ", \"act_gate\": \"" ++ (match gateAct ⟨tau0, hcert0, 5⟩ actResp with
+           | some _ => "decided" | none => "none") ++ "\""
+      ++ ", \"act_gate_payload\": " ++ (match gateAct ⟨tau0, hcert0, 5⟩ actResp with
+           | some a => "\"" ++ a ++ "\"" | none => "null")
+      -- POSITIVE path: calib bound to loop 2, confidence from loop 2
+      -- (conf 84 ≥ τ): payload = the ACTION, COMPUTED by gateAct
+      ++ ", \"act_gate_positive\": \"" ++ (match gateAct ⟨tau0, hcert0, 2⟩ actRespPos with
+           | some _ => "decided" | none => "none") ++ "\""
+      ++ ", \"act_gate_payload_positive\": " ++ (match gateAct ⟨tau0, hcert0, 2⟩ actRespPos with
+           | some a => "\"" ++ a ++ "\"" | none => "null")
+      -- the TIE-BREAK case: two actions with EQUAL exact numerators —
+      -- the FIRST-declared one is selected (rollback before wait), the
+      -- selection PROVED via demoTieMin/demoTieFirst and exported from the
+      -- constructed response; gateAct COMPUTED
+      ++ ", \"act_tie_actions\": " ++ toString (["rollback", "wait"].map (fun s => "\"" ++ s ++ "\""))
+      ++ ", \"act_tie_cost_nums\": " ++ toString actRespTie.exactCostNums
+      ++ ", \"act_tie_selected\": \"" ++ actRespTie.selected ++ "\""
+      ++ ", \"act_tie_gate_positive\": \"" ++ (match gateAct ⟨tau0, hcert0, 2⟩ actRespTie with
+           | some _ => "decided" | none => "none") ++ "\""
+      ++ ", \"act_tie_gate_payload_positive\": " ++ (match gateAct ⟨tau0, hcert0, 2⟩ actRespTie with
+           | some a => "\"" ++ a ++ "\"" | none => "null")
       ++ "}"
     IO.println j
     return 0
