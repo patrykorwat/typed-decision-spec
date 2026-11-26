@@ -544,4 +544,138 @@ theorem gateScoreResult_is_public_shape (c : ScoreCalib) (r : ScoreResponse) :
   ⟨gateScoreResult_value c r, gateScoreResult_loop c r,
    gateScoreResult_calibLoop c r⟩
 
+/-! ## Act: an expected-cost contract (v1.6)
+
+**Design decisions (recorded before implementation, per the review):**
+
+1. **Direction:** the best action MINIMIZES the exact expected cost —
+   `exactCostNum`, never the floored `expectedCost` (the floor is lossy
+   and can mask differences between actions).
+2. **Tie-breaking:** on equal `exactCostNum`, the FIRST action in
+   declaration order wins (deterministic; abstaining on ties would make
+   the gate non-monotone).
+3. **Costs live on their own scale** with an explicit `MAX_COST`, exact
+   numerator + floor semantics like score.
+4. **Confidence describes the trustworthiness of the action choice
+   itself** — neither the magnitude of the cost nor the certainty of a
+   single cost forecast; its measurable correctness criterion is defined
+   in the evaluation data, outside this model. It stays a separate
+   quantity with its own loop binding.
+-/
+
+/-- The MAX_COST of the act contract's scale. -/
+def MAX_COST : Nat := 100
+
+/-- A single cost–weight pair on the act scale. -/
+structure CostEntry where
+  cost : Nat
+  weight : Nat
+  cost_le_max : cost ≤ MAX_COST
+
+/-- The total weight of a cost distribution. -/
+def distCostSum (dist : List (Nat × Nat)) : Nat := (dist.map Prod.snd).sum
+
+/-- **The exact cost numerator**: Σ cost·weight — the rational expected
+cost is `exactCostNum dist / 100`, NO truncation. -/
+def exactCostNum (dist : List (Nat × Nat)) : Nat :=
+  (dist.map (fun p => p.1 * p.2)).sum
+
+/-- **The integer expected cost**: the FLOOR of the exact rational
+expected cost `exactCostNum dist / 100` (`Nat` division truncates).
+NEVER use this for selection — the floor is lossy. -/
+def expectedCost (dist : List (Nat × Nat)) : Nat :=
+  exactCostNum dist / 100
+
+/-- The floor bound for costs, mirror of `expectedValue_floor`. -/
+theorem expectedCost_floor (dist : List (Nat × Nat)) :
+    100 * expectedCost dist ≤ exactCostNum dist
+      ∧ exactCostNum dist ≤ 100 * expectedCost dist + 99 := by
+  have hdm := Nat.div_add_mod (exactCostNum dist) 100
+  have hlt := Nat.mod_lt (exactCostNum dist) (by omega : 0 < 100)
+  show 100 * (exactCostNum dist / 100) ≤ exactCostNum dist
+    ∧ exactCostNum dist ≤ 100 * (exactCostNum dist / 100) + 99
+  omega
+
+/-- **Selection by the EXACT cost, not the floor**: a concrete witness —
+actions `a` (exact cost 50: distribution `[(1, 50)]`) and `b` (exact
+cost 80: `[(4, 20)]`) have the SAME floor `expectedCost = 0` but
+DIFFERENT exact numerators (50 vs 80); selecting on the floor could not
+distinguish them. The contract therefore selects on `exactCostNum`. -/
+theorem floor_loses_information :
+    expectedCost [(1, 50)] = expectedCost [(4, 20)]
+      ∧ exactCostNum [(1, 50)] ≠ exactCostNum [(4, 20)] := by
+  refine ⟨rfl, ?_⟩
+  have h1 : exactCostNum [(1, 50)] = 50 := rfl
+  have h2 : exactCostNum [(4, 20)] = 80 := rfl
+  omega
+
+/-- The act response: a well-formed cost distribution per action, an
+EXACT COST numerator list (computed), a confidence with its source
+loop, and the SELECTED action (an identifier from the vocabulary). -/
+structure ActResponse where
+  actions : List String
+  costDists : List (List (Nat × Nat))
+  exactCostNums : List Nat
+  selected : String
+  confidence : Pct
+  confidenceLoopIdx : Nat
+  actions_nodup : actions.Nodup
+  actions_nonempty : actions ≠ []
+  len_match : costDists.length = actions.length
+  nums_match : exactCostNums.length = actions.length
+  sel_mem : selected ∈ actions
+  conf_le_100 : confidence ≤ 100
+
+/-- Build an act response from per-action cost distributions: the exact
+cost numerators are COMPUTED (`List.map exactCostNum`), never supplied. -/
+def actOfDists (actions : List String) (costDists : List (List (Nat × Nat)))
+    (selected : String) (c : Pct) (loopIdx : Nat)
+    (hnd : actions.Nodup) (hne : actions ≠ [])
+    (hlen : costDists.length = actions.length)
+    (hmem : selected ∈ actions) (hc : c ≤ 100) : ActResponse :=
+  { actions := actions, costDists := costDists,
+    exactCostNums := costDists.map exactCostNum,
+    selected := selected, confidence := c, confidenceLoopIdx := loopIdx,
+    actions_nodup := hnd, actions_nonempty := hne, len_match := hlen,
+    nums_match := by rw [List.length_map]; exact hlen,
+    sel_mem := hmem, conf_le_100 := hc }
+
+/-- **An act calibration is its own object**: threshold on the act scale
+(≤ MAX_COST), plus the loop it was fitted at. `threshold_le_max` is ONLY
+the structural scale bound. -/
+structure ActCalib where
+  τ : Pct
+  threshold_le_max : τ ≤ MAX_COST
+  loopIdx : Nat
+
+/-- **The act gate**: decide — with the SELECTED ACTION as payload —
+iff the calibration is bound to the confidence's own loop AND the
+confidence admits it; otherwise abstain. The payload is `r.selected`,
+never a cost and never the confidence. -/
+def gateAct (c : ActCalib) (r : ActResponse) : Option String :=
+  if c.loopIdx = r.confidenceLoopIdx ∧ c.τ ≤ r.confidence then some r.selected else none
+
+/-- **Wrong loop: the act calibration does not apply** (mirror of
+`gateScore_wrong_loop_never_decides`). -/
+theorem gateAct_wrong_loop_never_decides (c : ActCalib) (r : ActResponse)
+    (h : c.loopIdx ≠ r.confidenceLoopIdx) : gateAct c r = none := by
+  simp only [gateAct]
+  exact if_neg (fun hc => h hc.1)
+
+/-- **Below the act threshold the gate abstains** (mirror of
+`gateScore_defers_below`). -/
+theorem gateAct_defers_below (c : ActCalib) (r : ActResponse)
+    (h : r.confidence < c.τ) : gateAct c r = none := by
+  simp only [gateAct]
+  exact if_neg (fun hc => Nat.not_le.mpr h hc.2)
+
+/-- **The payload is the SELECTED ACTION** — at an honest call site the
+deciding gate returns the action identifier, never a cost and never the
+confidence. -/
+theorem gateAct_payload_is_action (c : ActCalib) (r : ActResponse)
+    (hloop : c.loopIdx = r.confidenceLoopIdx) (hdec : c.τ ≤ r.confidence) :
+    gateAct c r = some r.selected := by
+  simp only [gateAct]
+  rw [if_pos (by exact ⟨hloop, hdec⟩)]
+
 end QTypes

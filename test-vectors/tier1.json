@@ -76,7 +76,7 @@
     "argmax",
     "none"
   ],
-  "vectors_sha256": "68b7830467bc9c9ffdfca8540c7770833d27a469f21dbcd07caebbe28346fec2",
+  "vectors_sha256": "adbebde32c5ba8aaf591ba13680317d1425d2c942c2462897520740224e09073",
   "gate_calib_cases": [
     "none",
     "none",
@@ -144,5 +144,22 @@
   "score_payload_positive": 52,
   "score_gate_positive": "argmax",
   "score_gate_wrong_loop": "none",
-  "score_exact_num": 5400
+  "score_exact_num": 5400,
+  "act_actions": [
+    "deploy",
+    "rollback",
+    "wait"
+  ],
+  "act_cost_nums": [
+    1000,
+    3000,
+    2000
+  ],
+  "act_selected": "deploy",
+  "act_conf": 20,
+  "act_conf_loop": 5,
+  "act_gate": "none",
+  "act_gate_payload": null,
+  "act_gate_positive": "decided",
+  "act_gate_payload_positive": "deploy"
 }

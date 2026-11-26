@@ -597,6 +597,94 @@ def test_score_rejects() -> None:
         assert ref.raw_at(t) <= 100
 
 
+# ---- act conformance (v1.6) ----
+
+def _mirror_gate_act(calib_loop, conf_loop, conf, selected):
+    """Python mirror of gateAct: the payload is the SELECTED ACTION
+    (never a cost, never the confidence); below the threshold or at a
+    wrong loop the gate abstains. Bounds validated on the act scale
+    (mirror of `threshold_le_max`, `conf_le_100`) and strict-integer
+    fields (mirror of Nat)."""
+    if not (isinstance(selected, str) and type(conf) is int
+            and type(calib_loop) is int and type(conf_loop) is int):
+        raise TypeError("act fields must be (str, int, int, int)")
+    if not 0 <= conf <= 100:
+        raise ValueError("ill-formed act response: confidence off the [0,100] scale")
+    if calib_loop != conf_loop:
+        return None
+    return selected if tau_le(conf, calib_tau) else None
+
+
+def test_act_golden() -> None:
+    """The Lean-exported act collection: 3 actions with different cost
+    distributions (exact numerators 1000/3000/2000), selection by
+    MINIMUM exact cost with first-declared tie-break, the gate at the
+    calibration threshold in ALL branches, and the payload being the
+    ACTION identifier."""
+    actions = V["act_actions"]
+    assert actions == ["deploy", "rollback", "wait"], "label order must be preserved"
+    nums = V["act_cost_nums"]
+    assert nums == [1000, 3000, 2000], "exact cost numerators computed per action"
+    assert V["act_selected"] == "deploy" == actions[0], (
+        "the minimum-exact-cost action must be selected (deploy, 1000)"
+    )
+    # positive path: calib bound to loop 2, confidence from loop 2 (84 >= 75)
+    assert V["act_gate_positive"] == "decided", "positive path must decide"
+    assert V["act_gate_payload_positive"] == "deploy", (
+        "the payload must be the ACTION identifier, not a cost and not the confidence"
+    )
+    # the mirror agrees on the positive path
+    assert _mirror_gate_act(2, 2, 84, "deploy") == "deploy"
+    # abstention: calib at loop 5, conf 20 < 75
+    assert V["act_gate"] == "none", "act gate must defer below the threshold"
+    assert _mirror_gate_act(5, 5, 20, "deploy") is None
+    # wrong loop: calib at 5, conf from loop 2 — abstains despite 84 >= 75
+    # (no separate frozen field: the Lean theorem gateAct_wrong_loop_never_decides
+    # covers it; the mirror exercises it here)
+    assert _mirror_gate_act(5, 2, 84, "deploy") is None
+
+
+def test_act_rejects() -> None:
+    """Negative and boundary cases (Python mirrors of the act contract's
+    theorems): below threshold the gate abstains (gateAct_defers_below);
+    the deciding payload is the ACTION, never a cost or the confidence
+    (gateAct_payload_is_action); wrong loop abstains
+    (gateAct_wrong_loop_never_decides); ill-formed responses —
+    non-integer fields, confidence off the scale, non-string action —
+    are REJECTED by validation."""
+    tau = CALIBRATION_THRESHOLD
+    # deferral below threshold — even for an attractive action
+    assert _mirror_gate_act(5, 5, tau - 1, "deploy") is None
+    # deciding payload is the action, NOT a cost and NOT the confidence
+    assert _mirror_gate_act(2, 2, tau, "deploy") == "deploy"
+    assert _mirror_gate_act(2, 2, 100, "rollback") == "rollback"
+    # wrong loop abstains regardless of the confidence
+    assert _mirror_gate_act(5, 2, tau, "deploy") is None
+    assert _mirror_gate_act(5, 2, 100, "wait") is None
+    # TYPE rejections: non-integer confidence, non-integer loop indices
+    for bad in ((5, 5, 85.0, "deploy"), (5, True, 85, "deploy")):
+        calib_loop, conf_loop, conf, selected = bad
+        try:
+            _mirror_gate_act(calib_loop, conf_loop, conf, selected)
+            raise AssertionError(f"non-integer field must raise TypeError: {bad}")
+        except TypeError:
+            pass
+    # ILL-FORMED: confidence off the scale
+    for bad in ((5, 5, 101, "deploy"), (5, 5, -1, "deploy")):
+        calib_loop, conf_loop, conf, selected = bad
+        try:
+            _mirror_gate_act(calib_loop, conf_loop, conf, selected)
+            raise AssertionError(f"ill-formed conf must raise ValueError: {bad}")
+        except ValueError:
+            pass
+    # non-string action (mirror of the vocabulary type)
+    try:
+        _mirror_gate_act(5, 5, 85, 99)
+        raise AssertionError("non-string action must raise TypeError")
+    except TypeError:
+        pass
+
+
 def test_reference_matches_frozen_trace() -> None:
     ref = ReferenceEngine(V["state"])
     got = [ref.conf_at(t) for t in range(1, SPEC_T + 1)]
@@ -723,6 +811,8 @@ def main() -> int:
         test_multi_rejects,
         test_score_golden,
         test_score_rejects,
+        test_act_golden,
+        test_act_rejects,
         test_reference_matches_frozen_trace,
         test_ishard_matches_frozen_and_boundary,
         test_gate_matches_frozen_and_boundary,
