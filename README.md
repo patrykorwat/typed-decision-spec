@@ -114,9 +114,9 @@ loop indices (mirror of `Nat` semantics). **`tool`** remains deferred
 A typed `ResponseFor : QType → Type` remains the target for unifying
 all six.
 
-## Proof audit (current as of v1.6.3)
+## Proof audit (current as of v1.6.4)
 
-All 162 top-level declarations of the library (`Basic`, `Defer`,
+All 172 top-level declarations of the library (`Basic`, `Defer`,
 `Loop`, `QTypes`) were checked with `#print axioms`: every checked
 dependency set is a subset of
 `[propext, Quot.sound, Classical.choice]` — **no `sorryAx`, no new
@@ -162,6 +162,30 @@ deliberately NOT changed (each re-derivable from the code):
   `top_ge_100_over_K`: that derivation needs the same max-atom case
   analysis (verified against omega), so the dedicated helper is
   cheaper than the "general" route.
+
+## Confidence semantics for evaluation data (act)
+
+The `act` contract's confidence — `ActResponse.confidence`, with its
+own loop (`confidenceLoopIdx`) — describes **the trustworthiness of the
+action choice itself**: how much the model trusts that the selected
+action is the right one. It is NOT the magnitude of a cost, and NOT the
+certainty of a single cost forecast. Its measurable correctness
+criterion lives in evaluation data, OUTSIDE this model (module
+docstring, `QTypes.lean`); this README fixes the definition that any
+collection and labeling protocol MUST use when judging act confidence:
+
+* a labeled act item records the action that SHOULD have been chosen
+  and whether the model's selection was correct — confidence is scored
+  against **selection correctness**, never against the cost value and
+  never against a per-forecast error;
+* when scoring, use the confidence carried by the SAME response as the
+  selection (the `confLoopIdx`/`calibLoopIdx` pairing of
+  `gateActResult` — a mismatch means the score does not describe the
+  gated decision).
+
+This is the definition referenced by issue #14 before closing; the
+formal side (separate quantity, own loop, gate abstention) is proved
+above and must not drift from the evaluation protocol's wording.
 
 ## Three thresholds, kept apart
 
@@ -220,8 +244,8 @@ provenance is the git history of `gen_vectors.py` plus the Lean export
 run recorded in CI logs.
 
 ```
-lake build                                # the proofs (10/10, zero warnings)
-python3 conformance/conformance.py        # 10 checks, exit 0
+lake build                                # the proofs (zero errors)
+python3 conformance/conformance.py        # 20 tests incl. the Lean export, exit 0
 python3 conformance/conformance.py --fast # skip the Lean export
 ```
 
@@ -246,6 +270,17 @@ python3 conformance/conformance.py --fast # skip the Lean export
 
 ## Version history
 
+* **v1.6.4** (2026-11-27, re-review follow-ups — #17): QTypes module
+  docstring updated (act formalized, tool deferred, `Conforming`
+  described as the base-`Response` gate contract); NON-trivial tie
+  witness (`demoTie2Min`/`demoTie2First` — selection at index 1 with
+  the earlier action strictly more expensive; `tie2_first_only` proves
+  the later-tied selection's obligation unsatisfiable, hence
+  unbuildable; `tie2Resp` shows the honest construction exists);
+  `reinjection_conf_differs` — the divergence witnessed with BOTH
+  engines' numbers through the same `binConfOf` transformation (98 vs
+  99); stale build-test numbers fixed; confidence-semantics section for
+  evaluation data added (the last #14 item).
 * **v1.6.3** (2026-11-27, external review round — #17): `Conforming`
   strengthened to the full gate contract (safe deferral AND sound
   argmax decision — a never-deciding gate no longer qualifies);

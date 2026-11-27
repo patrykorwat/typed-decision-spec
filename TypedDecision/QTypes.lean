@@ -30,10 +30,26 @@ contract already guarantees for it.
   `scoreOfDist` (canonical path), `ScoreCalib` (own threshold + loop
   binding), `gateScore` (payload = the value; wrong loop and
   below-threshold both abstain).
+* `act` — **the expected-cost contract**: `ActResponse` (per-action
+  `CostEntry` distributions — each cost carries its own scale proof —
+  computed exact numerators, `sel_min` + `sel_first` over
+  `actions.idxOf`), `ActCalib` (a CONFIDENCE threshold + loop
+  binding), `gateAct` (payload = the selected action; wrong loop and
+  below-threshold both abstain), `ActDecisionResult` (both loop
+  indices travel). The first-declared rule is exercised by the tie
+  witnesses: `demoTieMin`/`demoTieFirst` (selection at index 0) and
+  the NON-trivial `demoTie2Min`/`demoTie2First` (selection at index 1,
+  the earlier action strictly more expensive, the later one tied) —
+  `tie2_first_only` shows the later-tied selection's obligation is
+  unsatisfiable, so that construction is impossible.
 
-**Deferred (semantics genuinely differ, documented in README):**
-`act` (expected-cost actions), `tool` (agent next-step). For these only
-the deferral semantics are covered by `Conforming` for every `QType`.
+**Deferred:** `tool` (agent next-step).
+
+`Conforming` (Defer.lean) is the shared gate contract for the BASE
+`Response`: safe deferral below τ AND a sound argmax decision at or
+above it, for every `QType` at the plain-response layer. The
+specialized contracts add their own loop-bound gates (`gateScore`,
+`gateAct`) over their richer response types.
 -/
 
 namespace QTypes
@@ -864,5 +880,110 @@ theorem demoTieFirst :
   have h0 : List.idxOf "rollback" (["rollback", "wait"] : List String) = 0 := by
     simp
   omega
+
+/-! ### The NON-trivial tie witness (review round 2)
+
+`demoTieMin`/`demoTieFirst` hold the selection at index 0, where
+`sel_first` reduces to `i ≥ 0`. The witness below puts the selection at
+INDEX 1 with the earlier action STRICTLY more expensive (4000 > 3000)
+and the later one tied (3000 = 3000) — the first case where `sel_first`
+has real content. `tie2_first_only` proves the later-tied selection's
+`sel_first` obligation UNSATISFIABLE; since `actOfDists` takes that
+obligation as a hypothesis, `selected := "wait"` is unbuildable for
+this collection. -/
+
+/-- A 4000-cost singleton (exact numerator 40·100) on the act scale. -/
+def d4000 : List CostEntry := [⟨40, 100, le100_40⟩]
+
+/-- The NON-trivial tie collection: `[4000, 3000, 3000]` — the minimum
+sits at index 1, an earlier action is more expensive, a later one ties. -/
+def tie2Dists : List (List CostEntry) := [d4000, dRollback, dTieB]
+
+/-- The tie2 distributions are normalized (weights sum to 100). -/
+theorem demoTie2Norm : ∀ x ∈ tie2Dists, distCostSum x = 100 := by
+  intro x hx
+  rcases List.mem_cons.mp hx with h | h
+  · subst h; rfl
+  · rcases List.mem_cons.mp h with h2 | h2
+    · subst h2; rfl
+    · rcases List.mem_cons.mp h2 with h3 | h3
+      · subst h3; rfl
+      · exact absurd h3 (by simp)
+
+/-- The tie2 selection satisfies minimality: `rollback` (index 1) has
+exact cost 3000 — the earlier `deploy` (4000) is strictly more
+expensive, the later `wait` ties. -/
+theorem demoTie2Min :
+    ∀ i (_ : i < List.length (["deploy", "rollback", "wait"] : List String)),
+      (tie2Dists.map exactCostNum)[i]! ≥
+        (tie2Dists.map exactCostNum)[List.idxOf "rollback"
+          (["deploy", "rollback", "wait"] : List String)]! := by
+  have hnum : ∀ j (_ : j < 3), (tie2Dists.map exactCostNum)[j]! ≥ 3000 := by
+    intro j hj
+    have h0 : (tie2Dists.map exactCostNum)[0]! = 4000 := rfl
+    have h1 : (tie2Dists.map exactCostNum)[1]! = 3000 := rfl
+    have h2 : (tie2Dists.map exactCostNum)[2]! = 3000 := rfl
+    by_cases e0 : j = 0
+    · subst e0; omega
+    · by_cases e1 : j = 1
+      · subst e1; omega
+      · have e2 : j = 2 := by omega
+        subst e2; omega
+  intro i hi
+  have hidx : List.idxOf "rollback" (["deploy", "rollback", "wait"] : List String) = 1 := by
+    decide
+  rw [hidx]
+  exact hnum i hi
+
+/-- The tie2 selection is FIRST-DECLARED among minima: `rollback` sits
+at index 1; the case `i = 0` is refuted NUMERICALLY (4000 ≠ 3000), not
+vacuously. -/
+theorem demoTie2First :
+    ∀ i (_ : i < List.length (["deploy", "rollback", "wait"] : List String)),
+      (tie2Dists.map exactCostNum)[i]! =
+        (tie2Dists.map exactCostNum)[List.idxOf "rollback"
+          (["deploy", "rollback", "wait"] : List String)]! →
+        i ≥ List.idxOf "rollback" (["deploy", "rollback", "wait"] : List String) := by
+  intro i hi Heq
+  have hidx : List.idxOf "rollback" (["deploy", "rollback", "wait"] : List String) = 1 := by
+    decide
+  rw [hidx] at Heq
+  have h0 : (tie2Dists.map exactCostNum)[0]! = 4000 := rfl
+  by_cases e0 : i = 0
+  · subst e0
+    rw [h0] at Heq
+    have h1 : (tie2Dists.map exactCostNum)[1]! = 3000 := rfl
+    rw [h1] at Heq
+    omega
+  · omega
+
+/-- **The later-tied selection's obligation is UNSATISFIABLE**: for
+`selected := "wait"` (index 2) the `sel_first` statement fails at
+`i = 1` (3000 = 3000 but 1 < 2). Since `actOfDists` takes `hfirst` as
+a hypothesis, an act response over `tie2Dists` selecting `wait` cannot
+be constructed. -/
+theorem tie2_first_only :
+    ¬ (∀ i (_ : i < List.length (["deploy", "rollback", "wait"] : List String)),
+        (tie2Dists.map exactCostNum)[i]! =
+          (tie2Dists.map exactCostNum)[List.idxOf "wait"
+            (["deploy", "rollback", "wait"] : List String)]! →
+          i ≥ List.idxOf "wait" (["deploy", "rollback", "wait"] : List String)) := by
+  intro H
+  have hidx : List.idxOf "wait" (["deploy", "rollback", "wait"] : List String) = 2 := by
+    decide
+  have h1 := H 1 (by decide)
+  rw [hidx] at h1
+  have hant : (tie2Dists.map exactCostNum)[1]! = (tie2Dists.map exactCostNum)[2]! := by
+    rw [show (tie2Dists.map exactCostNum)[1]! = 3000 from rfl,
+        show (tie2Dists.map exactCostNum)[2]! = 3000 from rfl]
+  have := h1 hant
+  omega
+
+/-- Constructibility, positive side: the response over `tie2Dists`
+selecting `rollback` (index 1) EXISTS — the certificates discharge. -/
+def tie2Resp : ActResponse :=
+  actOfDists ["deploy", "rollback", "wait"] tie2Dists "rollback" 100 2
+    (by decide) (by decide) (by decide)
+    demoTie2Norm demoTie2Min demoTie2First (by simp) (by decide)
 
 end QTypes

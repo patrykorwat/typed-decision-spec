@@ -234,6 +234,28 @@ theorem reinjection_differs :
   rw [h1, h2]
   decide
 
+/-- The witness engines of the reinjection divergence (shared by both
+witnesses): dynamics `h ↦ h + 1`, the bounded identity readout, mark 1. -/
+def FWit : Nat → Nat := fun h => h + 1
+def rWit : Readout := ⟨fun _ h => h % 100, fun _ h => Nat.le_of_lt (Nat.mod_lt h (by omega))⟩
+
+/-- The SAME divergence, both sides through ONE transformation: the
+re-injected state is fed through `binConfOf` (the same `max p (100-p)`
+confidence construction as `runBin` uses), so the difference comes from
+the state update alone, not from comparing a raw readout with a
+confidence. Same dynamics/readout/mark as `reinjection_differs`:
+confidence 98 (re-injected) vs 99 (conforming). -/
+theorem reinjection_conf_differs :
+    ∃ (F : Nat → Nat) (r : Readout) (h0 : Nat),
+      binConfOf (r.f 1 (iter (fun h => F h + 1) 1 h0)) (r.bounded 1 (iter (fun h => F h + 1) 1 h0))
+        ≠ binConf r F h0 1 :=
+  ⟨FWit, rWit, 0, by
+    have hA : binConfOf (rWit.f 1 (iter (fun h => FWit h + 1) 1 0))
+        (rWit.bounded 1 (iter (fun h => FWit h + 1) 1 0)) = 98 := rfl
+    have hB : binConf rWit FWit 0 1 = 99 := rfl
+    show (98 : Nat) ≠ 99
+    omega⟩
+
 /-- A calibration threshold: question-type-specific, carries the loop
 index it was fitted at. `certified` is only the structural bound of the
 stored number — whether τ is actually statistically certified is
