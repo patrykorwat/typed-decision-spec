@@ -53,8 +53,10 @@ contract already guarantees for it.
   identity unambiguous — semantics genuinely differ from act, which
   selects by computed expected cost.
 
-**Deferred:** none at the contract level; `ResponseFor` (#16) remains
-the unification target.
+All six question types have their own contract; the `ResponseFor`
+family at the end of this module unifies the assignment of a response
+shape to a `QType` WITHOUT weakening any of the six (see its recorded
+design decisions).
 
 `Conforming` (Defer.lean) is the shared gate contract for the BASE
 `Response`: safe deferral below τ AND a sound argmax decision at or
@@ -1144,5 +1146,66 @@ def demoToolRespPos : ToolResponse :=
 
 def demoToolRespBnd : ToolResponse :=
   toolOf demoTools "read" 100 2 (by decide) (by decide) (by simp [demoTools]) (by decide)
+
+/-! ## ResponseFor: the typed unification (v2.0, Phase A)
+
+**Design decisions (recorded before implementation, per the review):**
+
+1. **A dependent family, not a flattened sum.** `ResponseFor q` maps
+   each `QType` to ITS OWN existing structure — the six contracts keep
+   their distinct invariants and data shapes by definition
+   (the `rfl`-dispatch theorems below). No common weaker denominator.
+2. **The existing structures are the members.** Nothing is replaced:
+   `actOfDists`/`toolOf`/`noulResponseOf`/`scoreOfDist` stay the
+   canonical constructors, and every proof in this module applies to
+   the family member verbatim.
+3. **Scope boundary (recorded):** the family UNIFIES the assignment of
+   a response shape to a question type; the gating still happens
+   through the per-contract gates (`gateScore`, `gateAct`, `gateTool`,
+   `gateCalib`, `gateMulti`) — a single generic gate over the family is
+   a deliberate non-goal for Phase A (the gates' payload types differ:
+   `Option Nat` vs `Option String`, and the result structures carry
+   different provenance fields).
+4. The production adapter is a SEPARATE later milestone (issue #16,
+   Phase B); this family is the typed interface it will implement.
+-/
+
+/-- The response family: every question type has its OWN contract
+structure (dispatch is definitional — see the six theorems below). -/
+def ResponseFor (q : QType) : Type :=
+  match q with
+  | QType.act => ActResponse
+  | QType.tool => ToolResponse
+  | QType.choice => Response
+  | QType.noul => BinaryResponse
+  | QType.score => ScoreResponse
+  | QType.multi => MultiResponse
+
+/-- The family is definitionally its members — no weakening, no
+wrapper layer: -/
+theorem ResponseFor_choice : ResponseFor QType.choice = Response := rfl
+theorem ResponseFor_noul : ResponseFor QType.noul = BinaryResponse := rfl
+theorem ResponseFor_multi : ResponseFor QType.multi = MultiResponse := rfl
+theorem ResponseFor_score : ResponseFor QType.score = ScoreResponse := rfl
+theorem ResponseFor_act : ResponseFor QType.act = ActResponse := rfl
+theorem ResponseFor_tool : ResponseFor QType.tool = ToolResponse := rfl
+
+/-- A named single-label multi witness for the family's inhabitness
+(the label's decision is the canonical 50/50 binary tie). -/
+def demoMultiTie : MultiResponse :=
+  { labels := ["alpha"], decisions := [noulResponseOf 50 (by decide)],
+    len_match := rfl, labels_nodup := by decide, labels_nonempty := by decide }
+
+/-- Every member of the family is INHABITED by a well-formed demo
+response — the family is non-degenerate at each `QType` (each witness
+is a contract's own canonical demo object). -/
+theorem ResponseFor_inhabited (q : QType) : Nonempty (ResponseFor q) := by
+  cases q with
+  | act => exact ⟨(tie2Resp : ActResponse)⟩
+  | tool => exact ⟨(demoToolResp : ToolResponse)⟩
+  | choice => exact ⟨(tieResponse : Response)⟩
+  | noul => exact ⟨(tieBinary : BinaryResponse)⟩
+  | score => exact ⟨(score85of55 : ScoreResponse)⟩
+  | multi => exact ⟨(demoMultiTie : MultiResponse)⟩
 
 end QTypes

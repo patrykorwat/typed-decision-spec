@@ -124,9 +124,19 @@ six question types are now formalized; a typed
 `ResponseFor : QType → Type` remains the target for unifying
 all six.
 
-## Proof audit (current as of v1.7)
+**`ResponseFor`** (as of v2.0 Phase A) is now in place: a dependent
+family mapping each `QType` to ITS OWN contract structure
+(`ResponseFor QType.act = ActResponse` etc. — all six dispatch
+theorems are `rfl`), with a non-degeneracy witness per member
+(`ResponseFor_inhabited`). The contracts keep their distinct
+invariants by definition — this is a typed unification of the
+assignment, NOT a flattening. The per-contract gates stay (their
+payload and provenance types differ); the production adapter is a
+separate later milestone (#16 Phase B).
 
-All 190 top-level declarations of the library (`Basic`, `Defer`,
+## Proof audit (current as of v2.0-a)
+
+All 199 top-level declarations of the library (`Basic`, `Defer`,
 `Loop`, `QTypes`) were checked with `#print axioms`: every checked
 dependency set is a subset of
 `[propext, Quot.sound, Classical.choice]` — **no `sorryAx`, no new
@@ -291,6 +301,22 @@ python3 conformance/conformance.py --fast # skip the Lean export
 
 ## Version history
 
+* **v2.0-a** (2026-11-27, #16 Phase A): `ResponseFor : QType → Type` —
+  the typed unification. A dependent family mapping each question type
+  to ITS OWN contract structure (six `rfl` dispatch theorems — no
+  weakening, no wrapper layer; the contracts keep their distinct
+  invariants by definition), plus `ResponseFor_inhabited`
+  (a non-degeneracy witness per member, each a contract's own demo
+  object). Deliberately NO generic gate over the family for this phase
+  (payload/provenance types differ across contracts — recorded); the
+  production adapter is Phase B, a separate milestone. No export or
+  frozen change (the bridge is untouched — the family adds no exported
+  fields); suite 22/22, 199 declarations audited.
+* **v1.7.2** (2026-11-27, review round 3): `act_actions` and
+  `act_tie_actions` exported from the constructed responses (the
+  single-source vocabulary rule now covers every exported list; values
+  identical, pin unchanged); the issue-#14 reference moved under the
+  act paragraph.
 * **v1.7.1** (2026-11-27, re-review follow-ups): `tool_tools` exported
   FROM the constructed response (single vocabulary source);
   wrong-loop vectors through the whole bridge for BOTH act and tool
