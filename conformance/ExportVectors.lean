@@ -236,6 +236,29 @@ def main (args : List String) : IO UInt32 := do
            | some _ => "decided" | none => "none") ++ "\""
       ++ ", \"act_tie_gate_payload_positive\": " ++ (match gateAct ⟨tau0, hcert0, 2⟩ actRespTie with
            | some a => "\"" ++ a ++ "\"" | none => "null")
+      -- the TOOL contract (v1.7): next-step selection from a declared
+      -- duplicate-free vocabulary; the response is CONSTRUCTED via toolOf
+      -- and the gate result is COMPUTED by gateTool
+      ++ ", \"tool_tools\": " ++ toString (["search", "read", "write"].map (fun s => "\"" ++ s ++ "\""))
+      ++ ", \"tool_selected\": \"" ++ demoToolResp.selected ++ "\""
+      ++ ", \"tool_conf\": " ++ toString demoToolResp.confidence
+      ++ ", \"tool_conf_loop\": " ++ toString demoToolResp.confidenceLoopIdx
+      ++ ", \"tool_gate\": \"" ++ (match gateTool ⟨tau0, hcert0, 5⟩ demoToolResp with
+           | some _ => "decided" | none => "none") ++ "\""
+      ++ ", \"tool_gate_payload\": " ++ (match gateTool ⟨tau0, hcert0, 5⟩ demoToolResp with
+           | some t => "\"" ++ t ++ "\"" | none => "null")
+      -- POSITIVE path: calib bound to loop 2, confidence from loop 2
+      -- (conf 84 ≥ τ): payload = the SELECTED TOOL, computed by gateTool
+      ++ ", \"tool_gate_positive\": \"" ++ (match gateTool ⟨tau0, hcert0, 2⟩ demoToolRespPos with
+           | some _ => "decided" | none => "none") ++ "\""
+      ++ ", \"tool_gate_payload_positive\": " ++ (match gateTool ⟨tau0, hcert0, 2⟩ demoToolRespPos with
+           | some t => "\"" ++ t ++ "\"" | none => "null")
+      -- the SCALE BOUNDARY: τ = 100 with the constructed confidence AT
+      -- 100 — the tool gate decides and the payload is the tool
+      ++ ", \"tool_gate_boundary\": \"" ++ (match gateTool ⟨100, by decide, 2⟩ demoToolRespBnd with
+           | some _ => "decided" | none => "none") ++ "\""
+      ++ ", \"tool_gate_payload_boundary\": " ++ (match gateTool ⟨100, by decide, 2⟩ demoToolRespBnd with
+           | some t => "\"" ++ t ++ "\"" | none => "null")
       ++ "}"
     IO.println j
     return 0

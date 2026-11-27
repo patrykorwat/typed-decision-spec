@@ -330,6 +330,29 @@ def test_lean_export_matches_frozen() -> None:
     assert lean["act_tie_gate_payload_positive"] == V["act_tie_gate_payload_positive"], (
         "Lean act tie gate payload positive != frozen"
     )
+    # the TOOL contract — the FULL three-way bridge (all 10 fields)
+    assert lean["tool_tools"] == V["tool_tools"], "Lean tool tools != frozen"
+    assert lean["tool_selected"] == V["tool_selected"], "Lean tool selected != frozen"
+    assert lean["tool_conf"] == V["tool_conf"], "Lean tool conf != frozen"
+    assert lean["tool_conf_loop"] == V["tool_conf_loop"], (
+        "Lean tool conf loop != frozen"
+    )
+    assert lean["tool_gate"] == V["tool_gate"], "Lean tool gate != frozen"
+    assert lean["tool_gate_payload"] == V["tool_gate_payload"], (
+        "Lean tool gate payload != frozen"
+    )
+    assert lean["tool_gate_positive"] == V["tool_gate_positive"], (
+        "Lean tool gate positive != frozen"
+    )
+    assert lean["tool_gate_payload_positive"] == V["tool_gate_payload_positive"], (
+        "Lean tool gate payload positive != frozen"
+    )
+    assert lean["tool_gate_boundary"] == V["tool_gate_boundary"], (
+        "Lean tool gate boundary != frozen"
+    )
+    assert lean["tool_gate_payload_boundary"] == V["tool_gate_payload_boundary"], (
+        "Lean tool gate payload boundary != frozen"
+    )
     # the exported probs are the response's own (binResponseOf_probs twin)
     for probs, conf in zip(lean["probs_trace"], lean["conf_trace"]):
         assert conf == max(probs), "Lean: conf != max(probs)"
@@ -774,6 +797,106 @@ def test_act_rejects() -> None:
         pass
 
 
+def _mirror_gate_tool(calib_loop, conf_loop, conf, selected):
+    """Python mirror of gateTool: the payload is the SELECTED TOOL
+    (never the confidence); below the threshold or at a wrong loop the
+    gate abstains. Confidence validated on the [0,100] scale
+    (mirror of `conf_le_100`), and strict-integer fields (mirror of
+    Nat — negative loop indices are NOT silently accepted)."""
+    if not (isinstance(selected, str) and type(conf) is int
+            and type(calib_loop) is int and type(conf_loop) is int):
+        raise TypeError("tool fields must be (str, int, int, int)")
+    if not 0 <= conf <= 100:
+        raise ValueError("ill-formed tool response: confidence off the [0,100] scale")
+    if calib_loop < 0 or conf_loop < 0:
+        raise ValueError("ill-formed tool response: negative loop index (mirror of Nat)")
+    if calib_loop != conf_loop:
+        return None
+    return selected if tau_le(conf, calib_tau) else None
+
+
+def test_tool_golden() -> None:
+    """The Lean-exported tool collection: next-step selection from a
+    declared duplicate-free vocabulary (membership and distinctness
+    derived independently from the exported lists), the gate in ALL
+    branches, and the payload being the TOOL identifier."""
+    tools = V["tool_tools"]
+    assert len(tools) == len(set(tools)) >= 1, (
+        "the tool vocabulary must be non-empty and duplicate-free"
+    )
+    assert V["tool_selected"] in tools, (
+        "the selected tool must be a member of the declared vocabulary"
+    )
+    assert V["tool_selected"] == "read" == tools[1], (
+        "the demo selection is `read` (non-trivial index 1)"
+    )
+    # positive path: calib bound to loop 2, confidence from loop 2 (84 >= 75)
+    assert V["tool_gate_positive"] == "decided", "positive path must decide"
+    assert V["tool_gate_payload_positive"] == "read", (
+        "the payload must be the TOOL identifier, not the confidence"
+    )
+    assert _mirror_gate_tool(2, 2, 84, "read") == V["tool_gate_payload_positive"]
+    # the SCALE BOUNDARY case: τ = 100 with the constructed conf AT 100
+    assert V["tool_gate_boundary"] == "decided", "boundary τ=100 must decide"
+    assert V["tool_gate_payload_boundary"] == "read"
+    assert _mirror_gate_tool(2, 2, 100, "read") == "read"
+    # abstention: calib at loop 5, conf 20 < 75
+    assert V["tool_gate"] == "none", "tool gate must defer below the threshold"
+    assert _mirror_gate_tool(5, 5, 20, "read") is None
+    # wrong loop: calib at 5, conf from loop 2 — abstains despite 84 >= 75
+    # (no separate frozen field: the Lean theorem
+    # gateTool_wrong_loop_never_decides covers it; the mirror exercises it)
+    assert _mirror_gate_tool(5, 2, 84, "read") is None
+
+
+def test_tool_rejects() -> None:
+    """Negative and boundary cases (Python mirrors of the tool contract's
+    theorems): below threshold the gate abstains (gateTool_defers_below);
+    the deciding payload is the TOOL (gateTool_payload_is_tool); wrong
+    loop abstains (gateTool_wrong_loop_never_decides); ill-formed
+    responses — non-integer fields, confidence off the scale, negative
+    loop indices, non-string tool — are REJECTED by validation."""
+    tau = CALIBRATION_THRESHOLD
+    # deferral below threshold — even for an attractive next step
+    assert _mirror_gate_tool(5, 5, tau - 1, "read") is None
+    # deciding payload is the tool, NOT the confidence
+    assert _mirror_gate_tool(2, 2, tau, "read") == "read"
+    assert _mirror_gate_tool(2, 2, 100, "write") == "write"
+    # wrong loop abstains regardless of the confidence
+    assert _mirror_gate_tool(5, 2, tau, "read") is None
+    assert _mirror_gate_tool(5, 2, 100, "write") is None
+    # TYPE rejections: non-integer confidence, non-integer loop indices
+    for bad in ((5, 5, 85.0, "read"), (5, True, 85, "read")):
+        calib_loop, conf_loop, conf, selected = bad
+        try:
+            _mirror_gate_tool(calib_loop, conf_loop, conf, selected)
+            raise AssertionError(f"non-integer field must raise TypeError: {bad}")
+        except TypeError:
+            pass
+    # ILL-FORMED: confidence off the scale
+    for bad in ((5, 5, 101, "read"), (5, 5, -1, "read")):
+        calib_loop, conf_loop, conf, selected = bad
+        try:
+            _mirror_gate_tool(calib_loop, conf_loop, conf, selected)
+            raise AssertionError(f"ill-formed conf must raise ValueError: {bad}")
+        except ValueError:
+            pass
+    # ILL-FORMED: NEGATIVE loop indices — mirror of Nat semantics
+    for bad in ((-1, 2, 84, "read"), (2, -1, 84, "read")):
+        calib_loop, conf_loop, conf, selected = bad
+        try:
+            _mirror_gate_tool(calib_loop, conf_loop, conf, selected)
+            raise AssertionError(f"negative loop index must raise ValueError: {bad}")
+        except ValueError:
+            pass
+    # non-string tool (mirror of the vocabulary type)
+    try:
+        _mirror_gate_tool(5, 5, 85, 99)
+        raise AssertionError("non-string tool must raise TypeError")
+    except TypeError:
+        pass
+
+
 def test_reference_matches_frozen_trace() -> None:
     ref = ReferenceEngine(V["state"])
     got = [ref.conf_at(t) for t in range(1, SPEC_T + 1)]
@@ -902,6 +1025,8 @@ def main() -> int:
         test_score_rejects,
         test_act_golden,
         test_act_rejects,
+        test_tool_golden,
+        test_tool_rejects,
         test_reference_matches_frozen_trace,
         test_ishard_matches_frozen_and_boundary,
         test_gate_matches_frozen_and_boundary,

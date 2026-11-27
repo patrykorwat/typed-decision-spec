@@ -109,14 +109,24 @@ floor-lossy witness is normalized (`floor_loses_information`:
 different numerators, weights summing to 100 on both sides). Every
 exported act gate result is COMPUTED by `gateAct` over the constructed
 response — no literal gate values. The Python mirror rejects negative
-loop indices (mirror of `Nat` semantics). **`tool`** remains deferred
-(agent next-step).
-A typed `ResponseFor : QType → Type` remains the target for unifying
+loop indices (mirror of `Nat` semantics).
+
+**`tool`** (as of v1.7) is the **next-step contract**:
+`ToolResponse` — the selected next step from a declared, non-empty,
+duplicate-free vocabulary with a confidence (trustworthiness of the
+choice itself, own loop) — `ToolCalib`/`gateTool` (payload = the
+selected tool; abstains below τ and on wrong loop), `ToolDecisionResult`
+(both loop indices travel; `gateToolResult_is_public_shape`),
+`tool_selected_idxOf_lt` (non-vacuity). Deliberately NO cost model and
+NO tie-break: the next-step choice carries no declared ordering
+quantity (act is the cost-bearing sibling). At the contract level all
+six question types are now formalized; a typed
+`ResponseFor : QType → Type` remains the target for unifying
 all six.
 
-## Proof audit (current as of v1.6.4)
+## Proof audit (current as of v1.7)
 
-All 172 top-level declarations of the library (`Basic`, `Defer`,
+All 190 top-level declarations of the library (`Basic`, `Defer`,
 `Loop`, `QTypes`) were checked with `#print axioms`: every checked
 dependency set is a subset of
 `[propext, Quot.sound, Classical.choice]` — **no `sorryAx`, no new
@@ -245,7 +255,7 @@ run recorded in CI logs.
 
 ```
 lake build                                # the proofs (zero errors)
-python3 conformance/conformance.py        # 20 tests incl. the Lean export, exit 0
+python3 conformance/conformance.py        # 22 tests incl. the Lean export, exit 0
 python3 conformance/conformance.py --fast # skip the Lean export
 ```
 
@@ -270,6 +280,19 @@ python3 conformance/conformance.py --fast # skip the Lean export
 
 ## Version history
 
+* **v1.7** (2026-11-27, #15): the **tool contract** — the last of the
+  six question types at the contract level: `ToolResponse` (selection
+  from a declared duplicate-free vocabulary + confidence with its own
+  loop), `toolOf` (canonical constructor), `ToolCalib`/`gateTool`
+  (payload = the selected tool; abstains below τ and on wrong loop),
+  `ToolDecisionResult`/`gateToolResult` (both loop indices travel;
+  public-shape theorem), `tool_selected_idxOf_lt` non-vacuity.
+  Deliberately no cost model and no tie-break (recorded in the module
+  docstring). Export: all 10 tool fields computed from the constructed
+  responses through `gateTool` (below-τ, positive, τ = 100 boundary);
+  frozen keys `tool_*` (new pin `7b9dd1c6…`); Python mirror with
+  strict-int/negative-index validation; golden derives membership and
+  distinctness from the exported lists.
 * **v1.6.4** (2026-11-27, re-review follow-ups — #17): QTypes module
   docstring updated (act formalized, tool deferred, `Conforming`
   described as the base-`Response` gate contract); NON-trivial tie

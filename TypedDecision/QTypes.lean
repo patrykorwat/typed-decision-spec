@@ -42,14 +42,25 @@ contract already guarantees for it.
   the earlier action strictly more expensive, the later one tied) —
   `tie2_first_only` shows the later-tied selection's obligation is
   unsatisfiable, so that construction is impossible.
+* `tool` — **the next-step contract**: `ToolResponse` (the selected
+  next step from a declared, non-empty, duplicate-free vocabulary +
+  confidence with its own loop), `ToolCalib` (a CONFIDENCE threshold +
+  loop binding), `gateTool` (payload = the selected tool; wrong loop
+  and below-threshold both abstain), `ToolDecisionResult` (both loop
+  indices travel). Deliberately NO cost model and NO tie-break: the
+  next-step choice carries no declared ordering quantity (that is
+  act's job), so the vocabulary distinctness makes the selection's
+  identity unambiguous — semantics genuinely differ from act, which
+  selects by computed expected cost.
 
-**Deferred:** `tool` (agent next-step).
+**Deferred:** none at the contract level; `ResponseFor` (#16) remains
+the unification target.
 
 `Conforming` (Defer.lean) is the shared gate contract for the BASE
 `Response`: safe deferral below τ AND a sound argmax decision at or
 above it, for every `QType` at the plain-response layer. The
 specialized contracts add their own loop-bound gates (`gateScore`,
-`gateAct`) over their richer response types.
+`gateAct`, `gateTool`) over their richer response types.
 -/
 
 namespace QTypes
@@ -985,5 +996,153 @@ def tie2Resp : ActResponse :=
   actOfDists ["deploy", "rollback", "wait"] tie2Dists "rollback" 100 2
     (by decide) (by decide) (by decide)
     demoTie2Norm demoTie2Min demoTie2First (by simp) (by decide)
+
+/-! ## Tool: the next-step contract (v1.7)
+
+**Design decisions (recorded before implementation, per the review):**
+
+1. **Selection from a declared vocabulary** — `tools` non-empty and
+   duplicate-free, `selected ∈ tools`: the chosen next step is a member
+   of the declared list (mirror of `ActResponse.actions`, WITHOUT the
+   cost machinery — the next-step choice carries no declared ordering
+   quantity; act is the cost-bearing sibling).
+2. **No tie-break rule** — without a cost (or any ordering quantity)
+   the first-declared question does not arise; the vocabulary
+   distinctness makes the selection's identity unambiguous.
+3. **Confidence** describes the trustworthiness of the next-step choice
+   itself — neither a cost magnitude nor a per-forecast certainty; its
+   measurable correctness criterion lives in evaluation data, outside
+   this model (mirror of act; the README fixes the scoring definition).
+4. **Gate** — `ToolCalib` is a CONFIDENCE threshold (`threshold_le_100`,
+   ≤ 100) plus the loop it was fitted at; `gateTool` decides with the
+   SELECTED TOOL as payload, abstains below the threshold and on a
+   wrong loop (mirror of `gateAct`).
+5. **Result shape** — `ToolDecisionResult` carries BOTH loop indices
+   (mirror of `ScoreDecisionResult`/`ActDecisionResult`); the pairing
+   travels with the decision.
+
+-/
+
+/-- **A tool response**: the selected next step from a declared
+vocabulary (non-empty, duplicate-free) with a confidence describing the
+trustworthiness of the choice itself, and the confidence's own source
+loop. -/
+structure ToolResponse where
+  tools : List String
+  selected : String
+  confidence : Pct
+  confidenceLoopIdx : Nat
+  /-- The vocabulary entries are distinct. -/
+  tools_nodup : tools.Nodup
+  /-- A next-step question has at least one candidate step. -/
+  tools_nonempty : tools ≠ []
+  /-- The selected tool is a member of the declared vocabulary. -/
+  sel_mem : selected ∈ tools
+  conf_le_100 : confidence ≤ 100
+
+/-- The canonical constructor: the caller certifies vocabulary
+well-formedness, membership and the confidence bound. -/
+def toolOf (tools : List String) (selected : String) (c : Pct) (loopIdx : Nat)
+    (hnd : tools.Nodup) (hne : tools ≠ [])
+    (hmem : selected ∈ tools) (hc : c ≤ 100) : ToolResponse :=
+  { tools := tools, selected := selected, confidence := c,
+    confidenceLoopIdx := loopIdx,
+    tools_nodup := hnd, tools_nonempty := hne,
+    sel_mem := hmem, conf_le_100 := hc }
+
+/-- The selected tool's own index is IN bounds — the non-vacuity guard
+for `!`-indexed selection arguments (mirror of the act guard). -/
+theorem tool_selected_idxOf_lt (r : ToolResponse) :
+    r.tools.idxOf r.selected < r.tools.length :=
+  List.idxOf_lt_length_of_mem r.sel_mem
+
+/-- **A tool calibration**: a CONFIDENCE threshold (`threshold_le_100`,
+≤ 100 — the gate compares τ with `r.confidence`) plus the loop it was
+fitted at. -/
+structure ToolCalib where
+  τ : Pct
+  threshold_le_100 : τ ≤ 100
+  loopIdx : Nat
+
+/-- **The tool gate**: decide — with the SELECTED TOOL as payload —
+iff the calibration is bound to the confidence's own loop AND the
+confidence admits it; otherwise abstain. The payload is `r.selected`,
+never the confidence. -/
+def gateTool (c : ToolCalib) (r : ToolResponse) : Option String :=
+  if c.loopIdx = r.confidenceLoopIdx ∧ c.τ ≤ r.confidence then some r.selected else none
+
+/-- **Wrong loop: the tool calibration does not apply** (mirror of
+`gateAct_wrong_loop_never_decides`). -/
+theorem gateTool_wrong_loop_never_decides (c : ToolCalib) (r : ToolResponse)
+    (h : c.loopIdx ≠ r.confidenceLoopIdx) : gateTool c r = none := by
+  simp only [gateTool]
+  exact if_neg (fun hc => h hc.1)
+
+/-- **Below the tool threshold the gate abstains** (mirror of
+`gateAct_defers_below`). -/
+theorem gateTool_defers_below (c : ToolCalib) (r : ToolResponse)
+    (h : r.confidence < c.τ) : gateTool c r = none := by
+  simp only [gateTool]
+  exact if_neg (fun hc => Nat.not_le.mpr h hc.2)
+
+/-- **The payload is the SELECTED TOOL** — at an honest call site the
+deciding gate returns the tool identifier, never the confidence. -/
+theorem gateTool_payload_is_tool (c : ToolCalib) (r : ToolResponse)
+    (hloop : c.loopIdx = r.confidenceLoopIdx) (hdec : c.τ ≤ r.confidence) :
+    gateTool c r = some r.selected := by
+  simp only [gateTool]
+  rw [if_pos (by exact ⟨hloop, hdec⟩)]
+
+/-- **The tool result of gating**: the decision plus BOTH loop indices —
+the response's confidence loop AND the calibration's bound loop (mirror
+of `ActDecisionResult`). -/
+structure ToolDecisionResult where
+  selected : Option String
+  /-- The confidence loop of the response that was gated. -/
+  confLoopIdx : Nat
+  /-- The loop the calibration was fitted at. -/
+  calibLoopIdx : Nat
+
+/-- Gating with the result carrying its provenance: both indices travel
+with the decision. -/
+def gateToolResult (c : ToolCalib) (r : ToolResponse) : ToolDecisionResult :=
+  { selected := gateTool c r, confLoopIdx := r.confidenceLoopIdx,
+    calibLoopIdx := c.loopIdx }
+
+/-- The result's payload agrees with the plain gate. -/
+theorem gateToolResult_selected (c : ToolCalib) (r : ToolResponse) :
+    (gateToolResult c r).selected = gateTool c r := rfl
+
+/-- The result carries the response's own confidence loop. -/
+theorem gateToolResult_confLoop (c : ToolCalib) (r : ToolResponse) :
+    (gateToolResult c r).confLoopIdx = r.confidenceLoopIdx := rfl
+
+/-- The result carries the calibration's own loop. -/
+theorem gateToolResult_calibLoop (c : ToolCalib) (r : ToolResponse) :
+    (gateToolResult c r).calibLoopIdx = c.loopIdx := rfl
+
+/-- **Classification:** `gateToolResult` is the PUBLIC contract shape
+for tool gating results (mirror of `gateActResult_is_public_shape`). -/
+theorem gateToolResult_is_public_shape (c : ToolCalib) (r : ToolResponse) :
+    (gateToolResult c r).selected = gateTool c r
+      ∧ (gateToolResult c r).confLoopIdx = r.confidenceLoopIdx
+      ∧ (gateToolResult c r).calibLoopIdx = c.loopIdx :=
+  ⟨gateToolResult_selected c r, gateToolResult_confLoop c r,
+   gateToolResult_calibLoop c r⟩
+
+/-- The demo tool vocabulary: three DISTINCT next steps; the selection
+`read` sits at a non-trivial index (1). -/
+def demoTools : List String := ["search", "read", "write"]
+
+/-- The demo tool responses: vocabulary membership and distinctness are
+the only obligations; the confidence comes from the readout. -/
+def demoToolResp : ToolResponse :=
+  toolOf demoTools "read" 20 5 (by decide) (by decide) (by simp [demoTools]) (by decide)
+
+def demoToolRespPos : ToolResponse :=
+  toolOf demoTools "read" 84 2 (by decide) (by decide) (by simp [demoTools]) (by decide)
+
+def demoToolRespBnd : ToolResponse :=
+  toolOf demoTools "read" 100 2 (by decide) (by decide) (by simp [demoTools]) (by decide)
 
 end QTypes
