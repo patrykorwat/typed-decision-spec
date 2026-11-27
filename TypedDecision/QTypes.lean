@@ -114,6 +114,7 @@ def tieResponse : Response :=
     argmax := 0
     conf := 50
     k_ge_2 := by decide
+    declared_nodup := by decide
     len_declared := rfl
     conf_is_top := rfl
     argmax_mem := by decide
@@ -163,6 +164,7 @@ def noulResponseOf (p : Nat) (hp : p ≤ 100) : BinaryResponse :=
           rcases hj0 with h | h
           · subst h; exact Nat.le_max_left p (100 - p)
           · subst h; exact Nat.le_max_right p (100 - p)
+        declared_nodup := by decide
         probs_le_100 := respP_le p hp
         sum_100 := respP_sum p hp }
     declared_len_2 := rfl
@@ -217,11 +219,11 @@ lifted through `map`). -/
 theorem gateMulti_defers_below (τ : Pct) (m : MultiResponse)
     (hbelow : ∀ d ∈ m.decisions, d.response.conf < τ) :
     ∀ x ∈ (gateMulti τ m).decisions, x = none := by
+  have hC := gate_conforming
   intro x hx
   obtain ⟨d, hd, hx⟩ := List.mem_map.mp hx
-  have hgate : gate QType.multi τ d.response = none := by
-    refine gate_conforming QType.multi d.response τ ?_
-    exact hbelow d hd
+  have hgate : gate QType.multi τ d.response = none :=
+    hC.1 QType.multi d.response τ (hbelow d hd)
   rw [hx] at hgate
   exact hgate
 
@@ -266,9 +268,10 @@ binary response produces NO decision — the unresolvable state is a
 gating-visible state, not just a well-formed response (mirror of
 `gate_conforming` at `conf = 50 < τ`). -/
 theorem tieBinary_defers (τ : Pct) (h : 50 < τ) :
-    gate QType.noul τ tieBinary.response = none :=
-  gate_conforming QType.noul tieBinary.response τ (by
-    -- tieBinary.response.conf = 50 definitionally; the hypothesis gives 50 < τ
+    gate QType.noul τ tieBinary.response = none := by
+  have hC := gate_conforming
+  -- tieBinary.response.conf = 50 definitionally; the hypothesis gives 50 < τ
+  exact hC.1 QType.noul tieBinary.response τ (by
     have : tieBinary.response.conf = 50 := rfl
     rw [this]; exact h)
 
@@ -723,6 +726,51 @@ theorem gateAct_payload_is_action (c : ActCalib) (r : ActResponse)
     gateAct c r = some r.selected := by
   simp only [gateAct]
   rw [if_pos (by exact ⟨hloop, hdec⟩)]
+
+/-- The selected action's own index is IN bounds — the non-vacuity
+guard for the `!`-indexed `sel_min`/`sel_first`: with `sel_mem` present
+the `idxOf` fallback (which would index at `length` and silently yield
+`0`) cannot fire. -/
+theorem selected_idxOf_lt (r : ActResponse) :
+    r.actions.idxOf r.selected < r.actions.length :=
+  List.idxOf_lt_length_of_mem r.sel_mem
+
+/-- **The act result of gating**: the decision plus BOTH loop indices —
+the response's confidence loop AND the calibration's bound loop (mirror
+of `ScoreDecisionResult`; the pairing travels with the decision). -/
+structure ActDecisionResult where
+  action : Option String
+  /-- The confidence loop of the response that was gated. -/
+  confLoopIdx : Nat
+  /-- The loop the calibration was fitted at. -/
+  calibLoopIdx : Nat
+
+/-- Gating with the result carrying its provenance: both indices travel
+with the decision. -/
+def gateActResult (c : ActCalib) (r : ActResponse) : ActDecisionResult :=
+  { action := gateAct c r, confLoopIdx := r.confidenceLoopIdx,
+    calibLoopIdx := c.loopIdx }
+
+/-- The result's payload agrees with the plain gate. -/
+theorem gateActResult_action (c : ActCalib) (r : ActResponse) :
+    (gateActResult c r).action = gateAct c r := rfl
+
+/-- The result carries the response's own confidence loop. -/
+theorem gateActResult_confLoop (c : ActCalib) (r : ActResponse) :
+    (gateActResult c r).confLoopIdx = r.confidenceLoopIdx := rfl
+
+/-- The result carries the calibration's own loop. -/
+theorem gateActResult_calibLoop (c : ActCalib) (r : ActResponse) :
+    (gateActResult c r).calibLoopIdx = c.loopIdx := rfl
+
+/-- **Classification:** `gateActResult` is the PUBLIC contract shape for
+act gating results (mirror of `gateScoreResult_is_public_shape`). -/
+theorem gateActResult_is_public_shape (c : ActCalib) (r : ActResponse) :
+    (gateActResult c r).action = gateAct c r
+      ∧ (gateActResult c r).confLoopIdx = r.confidenceLoopIdx
+      ∧ (gateActResult c r).calibLoopIdx = c.loopIdx :=
+  ⟨gateActResult_action c r, gateActResult_confLoop c r,
+   gateActResult_calibLoop c r⟩
 
 /-- The demo act distributions: deploy (exact numerator 1000), rollback
 (3000) and wait (2000) — each a normalized singleton on the act scale. -/

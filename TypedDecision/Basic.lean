@@ -50,6 +50,10 @@ structure Response where
   argmax : Nat
   conf : Pct
   k_ge_2 : 2 ≤ declared.length
+  /-- The declared options are DISTINCT (a set of options, not a
+  multiset — mirrors `labels_nodup`/`actions_nodup` on the richer
+  response types). -/
+  declared_nodup : declared.Nodup
   len_declared : probs.length = declared.length
   conf_is_top : conf = probs[argmax]!
   argmax_mem : argmax < declared.length

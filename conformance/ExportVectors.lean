@@ -133,6 +133,11 @@ def main (args : List String) : IO UInt32 := do
     let actRespTie := actOfDists ["rollback", "wait"] tieDists "rollback"
       (rd 2 (iter F 2 H0)) 2 (by decide) (by decide) (by decide)
       demoTieNorm demoTieMin demoTieFirst (by simp) (hmod _)
+    -- the SCALE BOUNDARY response: confidence AT 100 (constructed, the
+    -- readout never reaches it) for the τ = 100 gate case
+    let actRespBnd := actOfDists ["deploy", "rollback", "wait"] demoDists "deploy"
+      100 2 (by decide) (by decide) (by decide)
+      demoNorm demoSel_min3 demoSel_first3 (by simp) (by decide)
     -- List String toString drops the quotes; re-add them for valid JSON
     let gatesQ := toString (gates.map (fun s => "\"" ++ s ++ "\""))
     let labelsQ := toString (["alpha", "beta", "gamma"].map (fun s => "\"" ++ s ++ "\""))
@@ -179,10 +184,18 @@ def main (args : List String) : IO UInt32 := do
               confidenceLoopIdx := 2,
               value_le_100 := hmod _, conf_le_100 := hmod _ } with
            | some _ => "argmax" | none => "none") ++ "\""
-      ++ ", \"score_gate_updated\": \"" ++ (match gateScore ⟨tau0, hcert0, 5⟩
+      -- the SCALE BOUNDARY: τ = 100 (largest representable threshold)
+      -- with a confidence AT the boundary (100) — the gate decides; the
+      -- trace readouts never reach 100, so this is constructed directly
+      ++ ", \"score_gate_boundary\": \"" ++ (match gateScore ⟨100, by decide, 2⟩
+            { value := rd 6 (iter F 6 H0), confidence := 100,
+              confidenceLoopIdx := 2,
+              value_le_100 := hmod _, conf_le_100 := by decide } with
+           | some _ => "argmax" | none => "none") ++ "\""
+      ++ ", \"score_gate_updated\": " ++ (match gateScore ⟨tau0, hcert0, 5⟩
             (scoreOfDist [(30, 40), (70, 60)] (rd 5 (iter F 5 H0)) 5
               demoDist_vals demoDist_sum (hmod _)) with
-           | some v => toString v | none => "none") ++ "\""
+           | some v => toString v | none => "null")
       ++ ", \"score_ev\": " ++ toString (expectedValue [(30, 40), (70, 60)])
       ++ ", \"score_exact_num\": " ++ toString (exactEVnum [(30, 40), (70, 60)])
       -- the ACT contract (v1.6.2): 3 actions with different cost
@@ -205,6 +218,12 @@ def main (args : List String) : IO UInt32 := do
       ++ ", \"act_gate_positive\": \"" ++ (match gateAct ⟨tau0, hcert0, 2⟩ actRespPos with
            | some _ => "decided" | none => "none") ++ "\""
       ++ ", \"act_gate_payload_positive\": " ++ (match gateAct ⟨tau0, hcert0, 2⟩ actRespPos with
+           | some a => "\"" ++ a ++ "\"" | none => "null")
+      -- the SCALE BOUNDARY: τ = 100 with the constructed confidence AT
+      -- 100 — the act gate decides and the payload is the action
+      ++ ", \"act_gate_boundary\": \"" ++ (match gateAct ⟨100, by decide, 2⟩ actRespBnd with
+           | some _ => "decided" | none => "none") ++ "\""
+      ++ ", \"act_gate_payload_boundary\": " ++ (match gateAct ⟨100, by decide, 2⟩ actRespBnd with
            | some a => "\"" ++ a ++ "\"" | none => "null")
       -- the TIE-BREAK case: two actions with EQUAL exact numerators —
       -- the FIRST-declared one is selected (rollback before wait), the

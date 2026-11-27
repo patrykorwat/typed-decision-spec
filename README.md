@@ -80,7 +80,7 @@ scale in BOTH directions, non-integers including bool/float/str) rejected
 by validation, EV=54 demo with exact numerator 5400.
 
 For `act` and `tool` the semantics genuinely differ. **`act`** (as of
-v1.6.2) is formalized as the **expected-cost contract with enforced
+v1.6.3) is formalized as the **expected-cost contract with enforced
 invariants**: `ActResponse` carries per-action cost distributions whose
 entries are `CostEntry`s — each cost CARRIES its own scale proof
 (`cost_le_max`, so an out-of-scale cost is unrepresentable at the entry
@@ -100,6 +100,10 @@ obligation, not prose: the export builds a tied response through
 frozen tie vector crosses the whole Lean → frozen → Python bridge
 (`act_tie_*`), with the Python golden test deriving the expected winner
 independently (`nums.index(min(nums))` — the FIRST minimum). The
+**public result shape mirrors score**: `gateActResult` carries the
+decision AND both loop indices (`gateActResult_is_public_shape`), so
+the conf-loop ↔ calib-loop pairing travels for act as well. The
+selected index is guarded non-vacuous (`selected_idxOf_lt`). The
 floor-lossy witness is normalized (`floor_loses_information`:
 [(1,50),(1,50)] exact 100 vs [(3,50),(0,50)] exact 150 — same floor 1,
 different numerators, weights summing to 100 on both sides). Every
@@ -110,17 +114,54 @@ loop indices (mirror of `Nat` semantics). **`tool`** remains deferred
 A typed `ResponseFor : QType → Type` remains the target for unifying
 all six.
 
-## Proof audit (current as of v1.6.2)
+## Proof audit (current as of v1.6.3)
 
-All 149 top-level declarations of the library (`Basic`, `Defer`,
-`Loop`, `QTypes`) were checked with `#print axioms`: every dependency
-set is a subset of
+All 162 top-level declarations of the library (`Basic`, `Defer`,
+`Loop`, `QTypes`) were checked with `#print axioms`: every checked
+dependency set is a subset of
 `[propext, Quot.sound, Classical.choice]` — **no `sorryAx`, no new
 axioms**. Zero `sorry`/`admit` in any module. Full `lake build` PASS;
 full conformance suite (20 tests, INCLUDING the Lean export — no
 `--fast`) passes with exit 0; both CI jobs green. Scope boundary: the
 formal claims are the ones named in this README; conformance tests
 mirror them in Python and are differential (frozen == Lean == Python).
+
+## Recorded design decisions (external review round, 2026-11-27)
+
+Findings from the external audit that were verified TRUE but
+deliberately NOT changed (each re-derivable from the code):
+
+* **`probs_le_100` is implied by `sum_100`** (every element of a `List
+  Nat` is at most its sum) — kept as an explicit field: the mirrors
+  validate bounds in BOTH directions independently, and review v1
+  demanded the invariants as fields. Same for `declared_len_2` vs
+  `declared_pair`.
+* **`ActResponse.exactCostNums` could be a plain `def`** — true; the
+  field form is the accepted design and both forms make wrong supply
+  unrepresentable. Not changed (avoided breaking the reviewed API for
+  zero guarantee gain).
+* **`distCostSum`/`exactCostNum`/`expectedCost` parallel the score
+  machinery** — deliberate: the contracts are separate by design; the
+  shared abstraction is the `ResponseFor` target (#16).
+* **`gateMulti` takes a raw τ, not a `Calib`** — deliberate: it is the
+  evaluation-side pointwise lift; loop binding is the structural
+  layer's job (`LoopResponse`/`Calib`).
+* **`loopIdx` is unbounded metadata** — the recorded provenance
+  decision; the index-typed variant is named in `binLoopResponse`'s
+  docstring as the full-strength version.
+* **`binLoopResponse` can mislabel `qtype`** (e.g. `noul` over
+  `["a", "b"]`) — true Tier-1 laxity; the fix IS `ResponseFor` (#16).
+* **The loop layer is binary-only (K = 2)** — now documented in the
+  `Loop` module docstring; multi-class readouts are the #16 target.
+* **`MultiDecisionResult` carries no label invariants** — consistent
+  with `ScoreDecisionResult`: result types carry provenance, response
+  types carry well-formedness.
+* **`gate`/`selectiveGate` parameter order vs `Conforming`'s** —
+  cosmetic; the one-line wrapper stays.
+* **`max_sub_ge` kept** despite being derivable from
+  `top_ge_100_over_K`: that derivation needs the same max-atom case
+  analysis (verified against omega), so the dedicated helper is
+  cheaper than the "general" route.
 
 ## Three thresholds, kept apart
 
@@ -205,6 +246,20 @@ python3 conformance/conformance.py --fast # skip the Lean export
 
 ## Version history
 
+* **v1.6.3** (2026-11-27, external review round — #17): `Conforming`
+  strengthened to the full gate contract (safe deferral AND sound
+  argmax decision — a never-deciding gate no longer qualifies);
+  `reinjection_differs` re-proved over the ACTUAL engines with a valid
+  `Readout` (`confAt` removed); the gateCalib/gateLoop theorem family
+  completed (wrong type, below-τ, deciding path, `gateOptLoop`);
+  `ActDecisionResult`/`gateActResult` added (mirror of
+  `ScoreDecisionResult`); `Response.declared_nodup` enforced;
+  `selected_idxOf_lt` non-vacuity guard; `score_gate_updated`
+  serialized as number|null (consistent with the payload fields);
+  scale-boundary vectors (τ = 100, conf = 100) through the whole
+  bridge; dead `hsub` and unused `isHard_K2_pct` removed;
+  `gateLoop_eq_gateCalib` proved by `rfl`. See also the recorded
+  design decisions above.
 * **v1.2** (this revision): P1-1 — trace confidences derived from
   CONSTRUCTED normalized binary responses (`binResponseOf`/`binConf`,
   `binConf_sound`); per-loop readout with a loop-index term and a

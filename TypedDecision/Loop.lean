@@ -15,7 +15,9 @@ W+U_tV_t, τ_t), input tokens encoded ONCE. Machine-checked properties:
   distribution), so the trace cannot carry numbers impossible for the
   declared response shape;
 * `reinjection_differs` — re-injecting tokens each loop is a
-  DIFFERENT model, demonstrated by a witness divergence;
+  DIFFERENT model: a witness over the ACTUAL engines (`reinjectedRun`
+  vs `runBin`) with a valid `Readout`; the re-injected number is not
+  even a confidence of a constructed response;
 * `wrong_loop_never_decides` / `no_calib_never_decides` — a calibration
   applies only at its own loop index; without a calibration record the
   engine refuses (SanSi §5.3: ECE best at loop 3, climbing again by
@@ -23,8 +25,15 @@ W+U_tV_t, τ_t), input tokens encoded ONCE. Machine-checked properties:
 
 The per-loop readout is a `Readout`: a function of the loop index AND
 the hidden state, bounded by construction — misassigned heads are
-detectable. `confAt` (scalar) remains only as the dynamics witness for
-`reinjection_differs`; the contract-level trace is response-derived.
+detectable. The loop layer is a BINARY reference model for Tier-1: the
+readout yields one `Pct` per loop, so every response built here is a
+2-option distribution (`binResponseOf`); multi-class readouts (K ≥ 2
+per loop) are the `ResponseFor` generalization, deliberately deferred.
+
+Scope note (recorded): `Calib.loopIdx` and `LoopResponse.loopIdx` are
+UNBOUNDED `Nat` — trusted adapter metadata, not a proof of origin
+(the index-typed structure would be the full-strength variant; the
+raw `LoopResponse.mk` stays public on purpose).
 -/
 
 namespace TypedDecision
@@ -39,11 +48,6 @@ def iter (F : Nat → Nat) (t : Nat) (h : Nat) : Nat :=
   match t with
   | 0 => h
   | t + 1 => F (iter F t h)
-
-/-- Scalar confidence read after loop t (dynamics witness only —
-see `reinjection_differs`; the contract-level trace is `binConf`). -/
-def confAt (read : Nat → Nat → Pct) (F : Nat → Nat) (h0 : Nat) (t : Nat) : Pct :=
-  read t (iter F t h0)
 
 /-- A per-loop readout: depends on the loop index AND the hidden state,
 bounded by construction (so a normalized distribution can be built
@@ -77,7 +81,6 @@ theorem binConf_is_max (p : Nat) (hp : p ≤ 100) (j : Nat) (hj : j < [p, 100 - 
 /-- All binary probs are ≤ 100, standalone. -/
 theorem binProbs_le_100 (p : Nat) (hp : p ≤ 100) : ∀ x ∈ [p, 100 - p], x ≤ 100 := by
   intro x hx
-  have hsub : p + (100 - p) = 100 := by omega
   rcases List.mem_cons.mp hx with h | h
   · omega
   · rcases List.mem_cons.mp h with h2 | h2
@@ -112,6 +115,7 @@ def binResponseOf (p : Nat) (hp : p ≤ 100) : Response :=
     argmax := if 50 ≤ p then 0 else 1
     conf := max p (100 - p)
     k_ge_2 := by decide
+    declared_nodup := by decide
     len_declared := rfl
     conf_is_top := binConf_is_top p hp
     argmax_mem := by
@@ -168,7 +172,9 @@ theorem budget_at (F : Nat → Nat) (r : Readout) (h0 T : Nat) :
   rfl
 
 /-- 50 ≤ max p (100-p) for p ≤ 100 — standalone (omega fails on this
-goal shape inside structure instances; black-box the helper). -/
+goal shape inside structure instances; black-box the helper). Verified
+against the alternative derivation from `top_ge_100_over_K`: that route
+needs the SAME max-atom case analysis, so the dedicated helper stays. -/
 theorem max_sub_ge (p : Nat) (hp : p ≤ 100) : 50 ≤ max p (100 - p) := by
   rcases Nat.le_total p (100 - p) with h | h
   · rw [Nat.max_eq_right h]
@@ -211,12 +217,21 @@ def reinjectedRun (F : Nat → Nat) (tokens : Nat) (read : Nat → Nat → Pct)
     (h0 : Nat) (T : Nat) : List Pct :=
   (List.range T).map (fun i => read (i + 1) (iter (fun h => F h + tokens) (i + 1) h0))
 
-/-- A deliberate divergence, demonstrated: with identity dynamics and
-readout and token mark 1, the reinjecting engine's confidence trace
-differs from the conforming one (0 vs 1 at loop 1). -/
+/-- A deliberate divergence, demonstrated on the ACTUAL engines: with
+dynamics `h ↦ h + 1`, the identity readout wrapped as a valid `Readout`
+and token mark 1, the re-injecting engine's RAW trace differs from the
+conforming one at loop 1 (`[2]` vs `[99]` — the re-injected number is
+not even a confidence of a constructed response). The witness removes
+the old `confAt` helper: it calls `reinjectedRun`/`runBin` themselves. -/
 theorem reinjection_differs :
-    confAt (fun _ h => h) (fun h => h) 0 1 ≠
-      confAt (fun _ h => h) (fun h => h + 1) 0 1 := by
+    ∃ (F : Nat → Nat) (r : Readout) (h0 : Nat),
+      reinjectedRun F 1 r.f h0 1 ≠ runBin F r h0 1 := by
+  refine ⟨fun h => h + 1, ⟨fun _ h => h % 100, fun _ h => Nat.le_of_lt (Nat.mod_lt h (by omega))⟩,
+    0, ?_⟩
+  have h1 : reinjectedRun (fun h => h + 1) 1 (fun _ h => h % 100) 0 1 = [2] := rfl
+  have h2 : runBin (fun h => h + 1)
+      ⟨fun _ h => h % 100, fun _ h => Nat.le_of_lt (Nat.mod_lt h (by omega))⟩ 0 1 = [99] := rfl
+  rw [h1, h2]
   decide
 
 /-- A calibration threshold: question-type-specific, carries the loop
@@ -240,6 +255,35 @@ theorem wrong_loop_never_decides (c : Calib) (ty : QType) (t : Nat) (r : Respons
     (h : c.loopIdx ≠ t) : gateCalib c ty t r = none := by
   simp only [gateCalib]
   exact if_neg (fun hc => h hc.2)
+
+/-- Wrong question type: the calibration does not apply (mirror of the
+wrong-loop refusal — the conjunctive condition has TWO guards, both
+proved). -/
+theorem wrong_type_never_decides (c : Calib) (ty : QType) (t : Nat) (r : Response)
+    (h : c.qtype ≠ ty) : gateCalib c ty t r = none := by
+  simp only [gateCalib]
+  exact if_neg (fun hc => h hc.1)
+
+/-- Below the calibration's own threshold: no decision (the bound call
+site falls through to `gate`, which defers by `gate_conforming`). -/
+theorem gateCalib_defers_below (c : Calib) (ty : QType) (t : Nat) (r : Response)
+    (h : r.conf < c.τ) : gateCalib c ty t r = none := by
+  have hC := gate_conforming
+  simp only [gateCalib]
+  by_cases hcond : c.qtype = ty ∧ c.loopIdx = t
+  · rw [if_pos hcond]
+    exact hC.1 ty r c.τ h
+  · rw [if_neg hcond]
+
+/-- The deciding path: at the calibration's OWN type and loop, with
+confidence at or above τ, the gate decides with the argmax as payload. -/
+theorem gateCalib_decides (c : Calib) (ty : QType) (t : Nat) (r : Response)
+    (hty : c.qtype = ty) (hloop : c.loopIdx = t) (hdec : c.τ ≤ r.conf) :
+    gateCalib c ty t r = some r.argmax := by
+  simp only [gateCalib]
+  rw [if_pos ⟨hty, hloop⟩]
+  simp only [gate, gateP, decide_eq_true_eq]
+  rw [if_pos hdec]
 
 /-- No calibration record, no decision — the engine refuses instead of
 guessing a threshold (same refusal class as refusing a quantized
@@ -297,12 +341,50 @@ theorem wrong_loop_structural (c : Calib) (lr : LoopResponse)
   simp only [gateLoop]
   exact if_neg (fun hc => h hc.2)
 
+/-- Structural twin of `wrong_type_never_decides`: a calibration cannot
+decide on a response of a DIFFERENT question type. -/
+theorem wrong_type_structural (c : Calib) (lr : LoopResponse)
+    (h : c.qtype ≠ lr.qtype) : gateLoop c lr = none := by
+  simp only [gateLoop]
+  exact if_neg (fun hc => h hc.1)
+
+/-- Structural twin of `gateCalib_defers_below`: the response's own
+confidence below the calibration's τ — no decision. -/
+theorem gateLoop_defers_below (c : Calib) (lr : LoopResponse)
+    (h : lr.response.conf < c.τ) : gateLoop c lr = none := by
+  have hC := gate_conforming
+  simp only [gateLoop]
+  by_cases hcond : c.qtype = lr.qtype ∧ c.loopIdx = lr.loopIdx
+  · rw [if_pos hcond]
+    exact hC.1 lr.qtype lr.response c.τ h
+  · rw [if_neg hcond]
+
+/-- Structural twin of `gateCalib_decides`: own type, own loop, at or
+above τ — the gate decides with the argmax as payload. -/
+theorem gateLoop_decides (c : Calib) (lr : LoopResponse)
+    (hty : c.qtype = lr.qtype) (hloop : c.loopIdx = lr.loopIdx)
+    (hdec : c.τ ≤ lr.response.conf) :
+    gateLoop c lr = some lr.response.argmax := by
+  simp only [gateLoop]
+  rw [if_pos ⟨hty, hloop⟩]
+  simp only [gate, gateP, decide_eq_true_eq]
+  rw [if_pos hdec]
+
+/-- The no-calibration refusal, structural layer: without a calibration
+record the bound response is never decided. -/
+def gateOptLoop (c : Option Calib) (lr : LoopResponse) : Decision :=
+  match c with
+  | some c => gateLoop c lr
+  | none => none
+
+theorem no_calib_structural_never_decides (lr : LoopResponse) :
+    gateOptLoop none lr = none := by
+  simp [gateOptLoop]
+
 /-- `gateLoop` agrees with `gateCalib` whenever the passed index IS the
-response's own index — the two APIs coincide at honest call sites. -/
+response's own index — the two APIs coincide at honest call sites.
+Definitional: both unfold to the same `if`. -/
 theorem gateLoop_eq_gateCalib (c : Calib) (lr : LoopResponse) :
-    gateLoop c lr = gateCalib c lr.qtype lr.loopIdx lr.response := by
-  by_cases h : c.qtype = lr.qtype ∧ c.loopIdx = lr.loopIdx
-  · rw [gateLoop, if_pos h, gateCalib, if_pos h]
-  · rw [gateLoop, if_neg h, gateCalib, if_neg h]
+    gateLoop c lr = gateCalib c lr.qtype lr.loopIdx lr.response := rfl
 
 end TypedDecision

@@ -282,6 +282,9 @@ def test_lean_export_matches_frozen() -> None:
     assert lean["score_gate_updated"] == V["score_gate_updated"], (
         "Lean score gate updated != frozen"
     )
+    assert lean["score_gate_boundary"] == V["score_gate_boundary"], (
+        "Lean score gate boundary != frozen"
+    )
     assert lean["score_ev"] == V["score_ev"], "Lean score EV != frozen"
     assert lean["score_exact_num"] == V["score_exact_num"], (
         "Lean score exact numerator != frozen"
@@ -303,6 +306,13 @@ def test_lean_export_matches_frozen() -> None:
     )
     assert lean["act_gate_payload_positive"] == V["act_gate_payload_positive"], (
         "Lean act gate payload positive != frozen"
+    )
+    # the SCALE BOUNDARY case (τ = 100, constructed conf = 100) — same bridge
+    assert lean["act_gate_boundary"] == V["act_gate_boundary"], (
+        "Lean act gate boundary != frozen"
+    )
+    assert lean["act_gate_payload_boundary"] == V["act_gate_payload_boundary"], (
+        "Lean act gate payload boundary != frozen"
     )
     # the TIE-BREAK vector — computed fields through the same bridge
     assert lean["act_tie_actions"] == V["act_tie_actions"], (
@@ -494,7 +504,7 @@ def test_multi_update_locality() -> None:
     )
     # the updated gate is compared field-by-field with the mirror
     # (scoreOfDist: EV=54, conf from loop 5, calib at loop 5, 54 < 75)
-    assert V["score_gate_updated"] == "none"
+    assert V["score_gate_updated"] is None
 
 
 def test_multi_rejects() -> None:
@@ -579,6 +589,11 @@ def test_score_golden() -> None:
     # 3. wrong loop (calib at 5, conf from 2): none even though 84 >= 75
     assert V["score_gate_wrong_loop"] == "none", "wrong loop must abstain"
     assert _mirror_gate_score(5, 2, 84, ref.raw_at(6)) is None
+    # 4. scale boundary (τ = 100 with constructed conf = 100): decides —
+    # the exported conf = None (abstention) case stays a real abstention
+    assert V["score_gate_boundary"] == "argmax", "boundary τ=100 must decide"
+    assert V["score_gate_updated"] is None
+    assert _mirror_gate_score(2, 2, 100, ref.raw_at(6)) == V["score_payload_positive"]
     # expected value of the demo distribution: floor of exact EV
     dist = [(30, 40), (70, 60)]
     assert sum(v * w for v, w in dist) // 100 == V["score_ev"] == 54
@@ -602,8 +617,8 @@ def test_score_rejects() -> None:
     assert _mirror_gate_score(5, 2, tau, 85) is None
     assert _mirror_gate_score(5, 2, 100, 30) is None
     # updated path (scoreOfDist: EV=54 of the demo dist, conf from loop 5,
-    # loop 5 matches, 54 < 75 ⇒ none) — compared with the frozen field
-    assert V["score_gate_updated"] == "none"
+    # loop 5 matches, 54 < 75 ⇒ null) — compared with the frozen field
+    assert V["score_gate_updated"] is None
     assert _mirror_gate_score(5, 5, 54, 54) is None
     # TYPE rejections (TypeError — strict int, bool is NOT accepted):
     # bool fields, float fields, string fields, and non-integer loop indices
@@ -694,6 +709,11 @@ def test_act_golden() -> None:
     assert _mirror_gate_act(2, 2, 84, "rollback") == "rollback"
     # the mirror agrees on the positive path
     assert _mirror_gate_act(2, 2, 84, "deploy") == "deploy"
+    # the SCALE BOUNDARY case: τ = 100 with the constructed conf AT 100 —
+    # decides; payload is the selected action (mirror agrees)
+    assert V["act_gate_boundary"] == "decided", "boundary τ=100 must decide"
+    assert V["act_gate_payload_boundary"] == "deploy"
+    assert _mirror_gate_act(2, 2, 100, "deploy") == "deploy"
     # abstention: calib at loop 5, conf 20 < 75
     assert V["act_gate"] == "none", "act gate must defer below the threshold"
     assert _mirror_gate_act(5, 5, 20, "deploy") is None

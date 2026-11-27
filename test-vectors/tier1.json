@@ -76,7 +76,7 @@
     "argmax",
     "none"
   ],
-  "vectors_sha256": "4452e4399d01b96b563ab8586bcf023b07e889a5f49a792bddcd267a9b98aa28",
+  "vectors_sha256": "5a4e80e0d08e21ac7b03d25a5515d6e0d71a2a278678aea4eabe5b4fb975b7f2",
   "gate_calib_cases": [
     "none",
     "none",
@@ -138,7 +138,7 @@
   "score_value": 84,
   "score_conf": 20,
   "score_gate": "none",
-  "score_gate_updated": "none",
+  "score_gate_updated": null,
   "score_ev": 54,
   "score_conf_loop": 5,
   "score_payload_positive": 52,
@@ -172,5 +172,8 @@
   ],
   "act_tie_selected": "rollback",
   "act_tie_gate_positive": "decided",
-  "act_tie_gate_payload_positive": "rollback"
+  "act_tie_gate_payload_positive": "rollback",
+  "score_gate_boundary": "argmax",
+  "act_gate_boundary": "decided",
+  "act_gate_payload_boundary": "deploy"
 }
