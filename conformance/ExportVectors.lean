@@ -204,7 +204,7 @@ def main (args : List String) : IO UInt32 := do
       -- the FIRST-DECLARED tie-break (sel_first) — the responses are
       -- CONSTRUCTED via actOfDists and every gate result is COMPUTED by
       -- gateAct, never a literal
-      ++ ", \"act_actions\": " ++ toString (["deploy", "rollback", "wait"].map (fun s => "\"" ++ s ++ "\""))
+      ++ ", \"act_actions\": " ++ toString (actResp.actions.map (fun s => "\"" ++ s ++ "\""))
       ++ ", \"act_cost_nums\": " ++ toString actResp.exactCostNums
       ++ ", \"act_selected\": \"" ++ actResp.selected ++ "\""
       ++ ", \"act_conf\": " ++ toString actResp.confidence
@@ -233,7 +233,7 @@ def main (args : List String) : IO UInt32 := do
       -- the FIRST-declared one is selected (rollback before wait), the
       -- selection PROVED via demoTieMin/demoTieFirst and exported from the
       -- constructed response; gateAct COMPUTED
-      ++ ", \"act_tie_actions\": " ++ toString (["rollback", "wait"].map (fun s => "\"" ++ s ++ "\""))
+      ++ ", \"act_tie_actions\": " ++ toString (actRespTie.actions.map (fun s => "\"" ++ s ++ "\""))
       ++ ", \"act_tie_cost_nums\": " ++ toString actRespTie.exactCostNums
       ++ ", \"act_tie_selected\": \"" ++ actRespTie.selected ++ "\""
       ++ ", \"act_tie_gate_positive\": \"" ++ (match gateAct ⟨tau0, hcert0, 2⟩ actRespTie with

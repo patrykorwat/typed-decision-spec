@@ -201,11 +201,12 @@ and explicitly NOT against the technical success of the tool
 invocation: a correctly chosen tool may still fail at runtime, and a
 tool may execute cleanly although it should not have been used at all.
 The same pairing requirement applies (`confLoopIdx`/`calibLoopIdx` of
-`gateToolResult`). The formal side (separate quantity, own loop, gate
-abstention) is proved above and must not drift from the evaluation
-protocol's wording.
+`gateToolResult`).
 
-This is the definition referenced by issue #14 before closing.
+The formal side (separate quantity, own loop, gate abstention) is
+proved above and must not drift from the evaluation protocol's
+wording. This is the definition referenced by issue #14 (act) before
+closing, extended to tool with its own reading.
 
 ## Three thresholds, kept apart
 
