@@ -76,7 +76,7 @@
     "argmax",
     "none"
   ],
-  "vectors_sha256": "7b9dd1c600aad87603a57ac08c5859bb006676b2b0fca46fbeaffc72bfab2a20",
+  "vectors_sha256": "3d13041d649ea9b961ded867a9fd1f1e5c23a66b3a9859c04e703e78c37502c4",
   "gate_calib_cases": [
     "none",
     "none",
@@ -189,5 +189,7 @@
   "tool_gate_positive": "decided",
   "tool_gate_payload_positive": "read",
   "tool_gate_boundary": "decided",
-  "tool_gate_payload_boundary": "read"
+  "tool_gate_payload_boundary": "read",
+  "act_gate_wrong_loop": "none",
+  "tool_gate_wrong_loop": "none"
 }

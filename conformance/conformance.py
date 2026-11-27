@@ -347,6 +347,14 @@ def test_lean_export_matches_frozen() -> None:
     assert lean["tool_gate_payload_positive"] == V["tool_gate_payload_positive"], (
         "Lean tool gate payload positive != frozen"
     )
+    # the WRONG-LOOP vectors — computed fields through the same bridge
+    # (calib at loop 5, the response's confidence from loop 2, 84 >= tau)
+    assert lean["act_gate_wrong_loop"] == V["act_gate_wrong_loop"], (
+        "Lean act gate wrong loop != frozen"
+    )
+    assert lean["tool_gate_wrong_loop"] == V["tool_gate_wrong_loop"], (
+        "Lean tool gate wrong loop != frozen"
+    )
     assert lean["tool_gate_boundary"] == V["tool_gate_boundary"], (
         "Lean tool gate boundary != frozen"
     )
@@ -741,8 +749,8 @@ def test_act_golden() -> None:
     assert V["act_gate"] == "none", "act gate must defer below the threshold"
     assert _mirror_gate_act(5, 5, 20, "deploy") is None
     # wrong loop: calib at 5, conf from loop 2 — abstains despite 84 >= 75
-    # (no separate frozen field: the Lean theorem gateAct_wrong_loop_never_decides
-    # covers it; the mirror exercises it here)
+    # (the frozen field exercises the same case through the bridge)
+    assert V["act_gate_wrong_loop"] == "none", "wrong loop must abstain (frozen)"
     assert _mirror_gate_act(5, 2, 84, "deploy") is None
 
 
@@ -844,8 +852,8 @@ def test_tool_golden() -> None:
     assert V["tool_gate"] == "none", "tool gate must defer below the threshold"
     assert _mirror_gate_tool(5, 5, 20, "read") is None
     # wrong loop: calib at 5, conf from loop 2 — abstains despite 84 >= 75
-    # (no separate frozen field: the Lean theorem
-    # gateTool_wrong_loop_never_decides covers it; the mirror exercises it)
+    # (the frozen field exercises the same case through the bridge)
+    assert V["tool_gate_wrong_loop"] == "none", "wrong loop must abstain (frozen)"
     assert _mirror_gate_tool(5, 2, 84, "read") is None
 
 

@@ -225,6 +225,10 @@ def main (args : List String) : IO UInt32 := do
            | some _ => "decided" | none => "none") ++ "\""
       ++ ", \"act_gate_payload_boundary\": " ++ (match gateAct ⟨100, by decide, 2⟩ actRespBnd with
            | some a => "\"" ++ a ++ "\"" | none => "null")
+      -- WRONG LOOP: calib at loop 5, the response's confidence from loop 2
+      -- (84 ≥ τ) — the calibration does not apply, the gate abstains
+      ++ ", \"act_gate_wrong_loop\": \"" ++ (match gateAct ⟨tau0, hcert0, 5⟩ actRespPos with
+           | some _ => "decided" | none => "none") ++ "\""
       -- the TIE-BREAK case: two actions with EQUAL exact numerators —
       -- the FIRST-declared one is selected (rollback before wait), the
       -- selection PROVED via demoTieMin/demoTieFirst and exported from the
@@ -238,8 +242,9 @@ def main (args : List String) : IO UInt32 := do
            | some a => "\"" ++ a ++ "\"" | none => "null")
       -- the TOOL contract (v1.7): next-step selection from a declared
       -- duplicate-free vocabulary; the response is CONSTRUCTED via toolOf
-      -- and the gate result is COMPUTED by gateTool
-      ++ ", \"tool_tools\": " ++ toString (["search", "read", "write"].map (fun s => "\"" ++ s ++ "\""))
+      -- and the gate result is COMPUTED by gateTool; the vocabulary is
+      -- exported FROM the constructed response (single source)
+      ++ ", \"tool_tools\": " ++ toString (demoToolResp.tools.map (fun s => "\"" ++ s ++ "\""))
       ++ ", \"tool_selected\": \"" ++ demoToolResp.selected ++ "\""
       ++ ", \"tool_conf\": " ++ toString demoToolResp.confidence
       ++ ", \"tool_conf_loop\": " ++ toString demoToolResp.confidenceLoopIdx
@@ -253,6 +258,10 @@ def main (args : List String) : IO UInt32 := do
            | some _ => "decided" | none => "none") ++ "\""
       ++ ", \"tool_gate_payload_positive\": " ++ (match gateTool ⟨tau0, hcert0, 2⟩ demoToolRespPos with
            | some t => "\"" ++ t ++ "\"" | none => "null")
+      -- WRONG LOOP: calib at loop 5, the response's confidence from loop 2
+      -- (84 ≥ τ) — the calibration does not apply, the gate abstains
+      ++ ", \"tool_gate_wrong_loop\": \"" ++ (match gateTool ⟨tau0, hcert0, 5⟩ demoToolRespPos with
+           | some _ => "decided" | none => "none") ++ "\""
       -- the SCALE BOUNDARY: τ = 100 with the constructed confidence AT
       -- 100 — the tool gate decides and the payload is the tool
       ++ ", \"tool_gate_boundary\": \"" ++ (match gateTool ⟨100, by decide, 2⟩ demoToolRespBnd with

@@ -16,7 +16,7 @@ calibration quality are empirical and stay in prose.
 |---|---|---|
 | `Response` (structure) | `Basic.lean` | response is bound to the DECLARED options (`declared` is a field — a response pointing outside the caller's options is not constructible); K ≥ 2 enforced; `probs` is the integer core of `p ∈ Δ^K`: entries ≤ 100 and summing to 100 |
 | `top_ge_100_over_K` | `Basic.lean` | normalization forces the top probability ≥ 100/K (pigeonhole) |
-| `gate_conforming` | `Defer.lean` | below the certified threshold the gate returns NO decision — typed by `QType`, via the SHARED predicate `gateP` (one definition for gate, witness and export) |
+| `gate_conforming` | `Defer.lean` | the FULL gate contract: below the certified threshold the gate returns NO decision, and at or above it the gate DECIDES with the argmax payload — typed by `QType`, via the SHARED predicate `gateP` (one definition for gate, witness and export) |
 | `selective_not_conforming` | `Defer.lean` | a gate that decides below threshold outside `act`/`tool` violates the contract — the REPORTED basal 2.8.1 finding as a type (one counterexample type kills the universal claim) |
 | `isHard_K2` | `Defer.lean` | hard-answer boundary pinned (EVALUATION threshold, SanSi §4): for binary questions, hard answer iff confidence ≥ 75% |
 | `runBin_length` / `budget_at` | `Loop.lean` | one run with T loops yields every budget 1..T (per SanSi §3; `h_0` is the token encoding, not a readout), and budget t's confidence sits at INDEX t-1 of the trace |
@@ -173,12 +173,12 @@ deliberately NOT changed (each re-derivable from the code):
   analysis (verified against omega), so the dedicated helper is
   cheaper than the "general" route.
 
-## Confidence semantics for evaluation data (act)
+## Confidence semantics for evaluation data (act and tool)
 
-The `act` contract's confidence — `ActResponse.confidence`, with its
-own loop (`confidenceLoopIdx`) — describes **the trustworthiness of the
-action choice itself**: how much the model trusts that the selected
-action is the right one. It is NOT the magnitude of a cost, and NOT the
+**`act`** — the confidence of `ActResponse`, with its own loop
+(`confidenceLoopIdx`), describes **the trustworthiness of the action
+choice itself**: how much the model trusts that the selected action is
+the right one. It is NOT the magnitude of a cost, and NOT the
 certainty of a single cost forecast. Its measurable correctness
 criterion lives in evaluation data, OUTSIDE this model (module
 docstring, `QTypes.lean`); this README fixes the definition that any
@@ -193,9 +193,19 @@ collection and labeling protocol MUST use when judging act confidence:
   `gateActResult` — a mismatch means the score does not describe the
   gated decision).
 
-This is the definition referenced by issue #14 before closing; the
-formal side (separate quantity, own loop, gate abstention) is proved
-above and must not drift from the evaluation protocol's wording.
+**`tool`** — the same discipline, with the next-step-specific reading:
+the confidence of `ToolResponse` measures the trustworthiness of the
+NEXT-STEP CHOICE — whether the selected tool was the right next step
+for the state and goal. It is scored against **selection correctness**,
+and explicitly NOT against the technical success of the tool
+invocation: a correctly chosen tool may still fail at runtime, and a
+tool may execute cleanly although it should not have been used at all.
+The same pairing requirement applies (`confLoopIdx`/`calibLoopIdx` of
+`gateToolResult`). The formal side (separate quantity, own loop, gate
+abstention) is proved above and must not drift from the evaluation
+protocol's wording.
+
+This is the definition referenced by issue #14 before closing.
 
 ## Three thresholds, kept apart
 
@@ -280,6 +290,16 @@ python3 conformance/conformance.py --fast # skip the Lean export
 
 ## Version history
 
+* **v1.7.1** (2026-11-27, re-review follow-ups): `tool_tools` exported
+  FROM the constructed response (single vocabulary source);
+  wrong-loop vectors through the whole bridge for BOTH act and tool
+  (`act_gate_wrong_loop`, `tool_gate_wrong_loop` — calib at loop 5,
+  the response's confidence from loop 2, computed by the gates,
+  frozen, asserted in the bridge and the goldens); evaluation-section
+  extended to tool (next-step correctness vs technical success of the
+  invocation); `gate_conforming` claim-table row updated to the full
+  contract (abstention below τ AND argmax payload at/above). New pin
+  `3d13041d…`.
 * **v1.7** (2026-11-27, #15): the **tool contract** — the last of the
   six question types at the contract level: `ToolResponse` (selection
   from a declared duplicate-free vocabulary + confidence with its own
