@@ -120,9 +120,8 @@ selected tool; abstains below τ and on wrong loop), `ToolDecisionResult`
 `tool_selected_idxOf_lt` (non-vacuity). Deliberately NO cost model and
 NO tie-break: the next-step choice carries no declared ordering
 quantity (act is the cost-bearing sibling). At the contract level all
-six question types are now formalized; a typed
-`ResponseFor : QType → Type` remains the target for unifying
-all six.
+six question types are formalized, and all six are connected through
+the typed `ResponseFor` family (below).
 
 **`ResponseFor`** (as of v2.0 Phase A) is now in place: a dependent
 family mapping each `QType` to ITS OWN contract structure
@@ -141,7 +140,7 @@ All 199 top-level declarations of the library (`Basic`, `Defer`,
 dependency set is a subset of
 `[propext, Quot.sound, Classical.choice]` — **no `sorryAx`, no new
 axioms**. Zero `sorry`/`admit` in any module. Full `lake build` PASS;
-full conformance suite (20 tests, INCLUDING the Lean export — no
+full conformance suite (22 tests, INCLUDING the Lean export — no
 `--fast`) passes with exit 0; both CI jobs green. Scope boundary: the
 formal claims are the ones named in this README; conformance tests
 mirror them in Python and are differential (frozen == Lean == Python).
