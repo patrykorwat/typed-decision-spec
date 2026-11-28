@@ -140,7 +140,7 @@ All 199 top-level declarations of the library (`Basic`, `Defer`,
 dependency set is a subset of
 `[propext, Quot.sound, Classical.choice]` — **no `sorryAx`, no new
 axioms**. Zero `sorry`/`admit` in any module. Full `lake build` PASS;
-full conformance suite (24 tests, INCLUDING the Lean export — no
+full conformance suite (25 tests, INCLUDING the Lean export — no
 `--fast`) passes with exit 0; both CI jobs green. Scope boundary: the
 formal claims are the ones named in this README; conformance tests
 mirror them in Python and are differential (frozen == Lean == Python).
@@ -275,7 +275,7 @@ run recorded in CI logs.
 
 ```
 lake build                                # the proofs (zero errors)
-python3 conformance/conformance.py        # 24 tests incl. the Lean export, exit 0
+python3 conformance/conformance.py        # 25 tests incl. the Lean export, exit 0
 python3 conformance/conformance.py --fast # skip the Lean export
 ```
 
@@ -409,6 +409,8 @@ longer holds fails the build loudly instead of silently drifting.
 * `conformance/gen_vectors.py` — derives and freezes the vectors (run once)
 * `conformance/ExportVectors.lean` — computes expected values from the Lean definitions
 * `conformance/conformance.py` — three-way differential conformance suite
-* `conformance/adapter.py` — Phase B reference adapter (issue #19):
-  `build(q, engine_output)` keyed dispatch, `choice`/`noul` slice
+* `conformance/adapter.py` — Phase B reference adapter (issues #19/#20):
+  `build(q, engine_output)` keyed dispatch, `choice`/`noul` slice; its
+  output feeds the conformance report differentially against the frozen
+  vectors (`test_adapter_bridge_report` in `conformance.py`)
 * `.github/workflows/ci.yml` — `lean-spec` + `conformance` jobs

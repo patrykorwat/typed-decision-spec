@@ -1084,6 +1084,129 @@ def test_adapter_rejects() -> None:
             pass
 
 
+def test_adapter_bridge_report() -> None:
+    """B3 bridge integration (issue #20): adapter output feeding the
+    conformance report, differential against the frozen vectors (design
+    §4 of docs/phase-b-adapter-design.md). For every pinned loop
+    t = 1..T the reference engine's OWN per-loop readout goes through
+    `adapter.build` (both binary branches) and `adapter.decide` at the
+    honest call site; the computed conf/argmax and the gate outcome are
+    asserted against the frozen vectors — computed from the constructed
+    responses, never transcribed. Per request the report emits a record
+    {qtype, loopIdx, gate, provenance}: provenance class `frozen` for
+    every case a pinned vector validates, `unpinned` for report-only
+    cases (none in this slice). The six frozen `gate_calib_cases` are
+    re-derived THROUGH the adapter path (same calibrations as
+    _gate_calib_cases: wrong-loop, wrong-type, no-record, below-τ,
+    deciding τ₀−1, wrong-loop-with-deciding-τ)."""
+    ref = ReferenceEngine(V["state"])
+    tau0 = CALIBRATION_THRESHOLD
+    report = []
+    for t in range(1, SPEC_T + 1):
+        for q in ("choice", "noul"):
+            declared = ["YES", "NO"] if q == "noul" else ["opt0", "opt1"]
+            out = {"loopIdx": t, "declared": declared,
+                   "probs": ref.probs_at(t)}
+            # the adapter's INPUT is the engine's own readout: differential
+            # against the frozen distribution before anything is built
+            assert ref.probs_at(t) == V["probs_trace"][t - 1], (
+                f"engine readout != frozen probs at loop {t}"
+            )
+            r = adapter.build(q, out)
+            assert r.probs == tuple(V["probs_trace"][t - 1])
+            assert r.conf == V["conf_trace"][t - 1], (
+                f"{q}: computed conf != frozen conf_trace at loop {t}"
+            )
+            assert r.argmax == r.probs.index(r.conf), (
+                f"{q}: argmax must be the first index attaining the confidence"
+            )
+            calib = {"qtype": q, "loopIdx": t, "tau": tau0}
+            got = adapter.decide(calib, q, r)
+            # two independent expectations for the gate: the gateLoop
+            # mirror of THIS suite on the constructed conf, and the
+            # frozen gate_tau75 vector — adapter == mirror == frozen
+            mirror = _gate_p(tau0, r.conf)
+            assert got == (None if mirror == "none" else mirror), (
+                f"{q}: adapter decide() != gateLoop mirror at loop {t}"
+            )
+            assert mirror == V["gate_tau75"][t - 1], (
+                f"{q}: τ₀ gate of the constructed conf != frozen gate_tau75 at loop {t}"
+            )
+            report.append({"qtype": q, "loopIdx": t,
+                           "gate": "none" if got is None else got,
+                           "provenance": "frozen"})
+    # report shape per design §4: exactly the four fields, every pinned
+    # case validated three-way (provenance `frozen`), no unpinned record
+    # in this slice, decision counts consistent with the frozen gate
+    assert len(report) == 2 * SPEC_T
+    for rec in report:
+        assert set(rec) == {"qtype", "loopIdx", "gate", "provenance"}
+        assert rec["provenance"] == "frozen"
+        assert rec["gate"] in ("none", "argmax")
+        assert rec["loopIdx"] == (report.index(rec) // 2) + 1
+    decided = [rec for rec in report if rec["gate"] != "none"]
+    # both branches share the readout, so both decide at exactly the
+    # frozen τ₀ argmax loops (2 records per deciding loop)
+    assert len(decided) == 2 * sum(1 for g in V["gate_tau75"] if g != "none")
+    print(f"ADAPTER REPORT: {len(report)} records "
+          f"(choice={sum(1 for x in report if x['qtype'] == 'choice')}, "
+          f"noul={sum(1 for x in report if x['qtype'] == 'noul')}), "
+          f"frozen-pinned={sum(1 for x in report if x['provenance'] == 'frozen')}, "
+          f"unpinned=0, decided={len(decided)}, "
+          f"abstained={len(report) - len(decided)}")
+
+    # the six frozen gate_calib_cases, re-derived THROUGH the adapter
+    # path — cases 2/3/6 exercise the conjunctive guard (wrong loop /
+    # wrong type), case 4 is gateOptCalib none, case 5 DECIDES on τ₀−1
+    def resp(t):
+        return adapter.build(
+            "choice", {"loopIdx": t, "declared": ["opt0", "opt1"],
+                       "probs": ref.probs_at(t)})
+
+    def gate_of(calib, q, r):
+        got = adapter.decide(calib, q, r)
+        return "none" if got is None else got
+
+    conf3 = V["conf_trace"][2]
+    conf5 = V["conf_trace"][4]
+    conf8 = V["conf_trace"][SPEC_T - 1]
+    calib3 = {"qtype": "choice", "loopIdx": 3, "tau": tau0}
+    calib5 = {"qtype": "choice", "loopIdx": 5, "tau": tau0 - 1}
+    calibD = {"qtype": "choice", "loopIdx": 3, "tau": conf8 - 1}
+    cases = [
+        gate_of(calib3, "choice", resp(3)),   # own loop, below τ₀
+        gate_of(calib3, "choice", resp(8)),   # wrong loop
+        gate_of(calib3, "act", resp(3)),      # wrong question type
+        gate_of(None, "choice", resp(3)),     # no calibration record
+        gate_of(calib5, "choice", resp(5)),   # own loop, DECIDING
+        gate_of(calibD, "choice", resp(8)),   # wrong loop, τ would decide
+    ]
+    # setup assertions: the discriminating cases really discriminate —
+    # their τ WOULD decide absent the binding the case is guarding
+    assert _gate_p(tau0 - 1, conf5) == "argmax", (
+        "case 5 must decide on its own τ"
+    )
+    assert _gate_p(conf8 - 1, conf8) == "argmax", (
+        "case 6's τ would decide absent the loop guard"
+    )
+    assert cases == V["gate_calib_cases"], (
+        f"adapter-path gate_calib_cases {cases} != frozen {V['gate_calib_cases']}"
+    )
+    assert _gate_p(tau0, conf3) == "none", (
+        "case 1 must be a below-τ case, not a binding case"
+    )
+
+    # noul with its own calibration: decided iff conf >= τ at the own
+    # loop — same conf as choice (shared readout), declared YES/NO pair
+    n = adapter.build("noul", {"loopIdx": 5, "declared": ["YES", "NO"],
+                               "probs": ref.probs_at(5)})
+    assert n.declared == ("YES", "NO")
+    assert adapter.decide({"qtype": "noul", "loopIdx": 5, "tau": tau0},
+                          "noul", n) == "argmax"
+    assert adapter.decide({"qtype": "noul", "loopIdx": 5,
+                           "tau": V["conf_trace"][4] + 1}, "noul", n) is None
+
+
 def test_reference_matches_frozen_trace() -> None:
     ref = ReferenceEngine(V["state"])
     got = [ref.conf_at(t) for t in range(1, SPEC_T + 1)]
@@ -1216,6 +1339,7 @@ def main() -> int:
         test_tool_rejects,
         test_adapter_build_choice_noul,
         test_adapter_rejects,
+        test_adapter_bridge_report,
         test_reference_matches_frozen_trace,
         test_ishard_matches_frozen_and_boundary,
         test_gate_matches_frozen_and_boundary,
