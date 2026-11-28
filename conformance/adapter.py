@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Phase B / B2+B4: Python reference adapter (issues #19, #21).
+"""Phase B / B2+B4+B5+B6: Python reference adapter (issues #19, #21, #22, #23).
 
 The Python twin of the Lean construction entry point designed in
 `docs/phase-b-adapter-design.md` (#18):
@@ -7,10 +7,9 @@ The Python twin of the Lean construction entry point designed in
     build (q : QType) (engine : EngineOutput) : ResponseFor q
 
 `build(q, engine_output)` is keyed on the request's question type and the
-dispatch key IS the return shape — one branch per QType. In this slice
-`choice`, `noul` (B2) and `score` (B4) produce responses (other branches
-raise NotImplementedError: the slice boundary is explicit, never a silent
-fallback). Design consequences mirrored here:
+dispatch key IS the return shape — one branch per QType. All six branches
+produce responses: `choice`/`noul` (B2), `score` (B4), `act`/`tool` (B5)
+and `multi` (B6). Design consequences mirrored here:
 
 * Response objects carry NO `qtype` string field: the dispatch key selects
   the constructor, so a `noul`-labeled two-option `choice` response is
@@ -82,6 +81,34 @@ fallback). Design consequences mirrored here:
 * `decide_tool` / `decide_tool_result` mirror `gateTool` /
   `gateToolResult` (`ToolDecisionResult`, payload = the SELECTED TOOL)
   with the same abstention and type-guard semantics.
+* `multi` branch (B6, issue #23): the engine supplies unique non-empty
+  labels and one per-label binary distribution; each label's decision is
+  a `BinaryResponse` mirror over the FIXED YES/NO pair with `conf =
+  max(probs)` and the first-max argmax COMPUTED — never engine-supplied.
+  The collection is per-label state, NOT one distribution over the power
+  set, and NOT loop-bound (the Lean `BinaryResponse` carries no loop
+  index; the loop layer is binary-only K = 2 by recorded design — no
+  calibration object is invented here). Duplicate labels
+  (`labels_nodup`), an empty collection (`labels_nonempty` — an empty
+  multi collection is not a question) and a labels/decisions length
+  mismatch (`len_match`) are rejections.
+* `multi_set` mirrors the canonical update constructor `multiSet`: a
+  `Fin`-range index (out-of-range and negative are rejections), the
+  other labels' decisions left untouched — the structural half
+  `multi_set_independent` proves; update locality, never a re-zip.
+* `decide_multi(tau, response)` mirrors `gateMulti`: the pointwise lift
+  of the shared gate over the per-label confidences at the collection's
+  own threshold — payload `argmax` per deciding label, abstention per
+  deferring label; below the threshold EVERY label defers
+  (`gateMulti_defers_below`). The result is a STRUCTURE carrying the
+  label–decision mapping (`MultiDecisionResult` with its own
+  `len_match`), so the pairing travels with the result and the adapter
+  never re-zips it.
+* NO statistical-independence claim anywhere: the contract is «separate
+  per-label distributions with update locality» — the marginals do not
+  determine a joint distribution (`multi_set_independent` proves only
+  the structural half), and no code path or result field suggests a
+  joint model.
 
 Engine output shape (`engine_output` dict): `{"loopIdx": int, "declared":
 [str, ...], "probs": [int, ...]}` — the per-loop readout rendered as a
@@ -90,18 +117,24 @@ index it was read at (binary branches). For `score`:
 `{"loopIdx": int, "dist": [[value, weight], ...], "confidence": int}` —
 the value distribution (weights normalized to 100, values on the
 [0,100] scale), the confidence, and the loop the confidence was read at.
-The B2 slice touched no Lean module and no frozen vector; B4 adds only
-the adapter-side path (the frozen score fields already cover every gate
-branch — no regeneration round needed).
+For `act`/`tool` see `_validated_act_output` / `_validated_tool_output`.
+For `multi`: `{"labels": [str, ...], "probs": [[int, int], ...]}` — the
+unique non-empty label list and one normalized two-entry binary
+distribution per label (label i's distribution is the engine's own
+per-label readout; no loop index — the collection is not loop-bound).
+All Phase B slices are complete; the B2 slice touched no Lean module
+and no frozen vector, and B4/B5/B6 add only adapter-side paths (the
+frozen score/act/tool/multi fields already cover every gate branch — no
+regeneration round needed).
 """
 
 from dataclasses import dataclass
 
 # the QTypes of Defer.lean, in declaration order
 QTYPES = ("choice", "noul", "multi", "score", "act", "tool")
-# later Phase B slices (B6); multi is the last slice — act/tool moved to
-# the producing branches in B5 (issue #22)
-LATER_SLICES = ("multi",)
+# all Phase B slices produce (B6 closed the last one, issue #23); the
+# constant stays as the explicit slice-boundary record
+LATER_SLICES = ()
 
 
 def _require_int(x, name):
@@ -269,6 +302,62 @@ class ToolDecisionResult:
     selected: str | None
     confLoopIdx: int
     calibLoopIdx: int
+
+
+@dataclass(frozen=True)
+class BinaryDecision:
+    """Mirror of `BinaryResponse` (QTypes.lean): the formal binary
+    decision — exactly two declared options carrying the YES/NO pair
+    (`declared_pair`), the distribution and confidence as in the shared
+    core (`conf = max(probs)` — computed, never supplied; first-max
+    argmax). NO loop index: the Lean `BinaryResponse` carries none — a
+    multi label's decision is per-label state, not loop-bound."""
+
+    declared: tuple
+    probs: tuple
+    argmax: int
+    conf: int
+
+
+@dataclass(frozen=True)
+class MultiResponse:
+    """Mirror of `MultiResponse` (QTypes.lean): separate per-label binary
+    decisions, one per UNIQUE non-empty label, position i of `decisions`
+    being the decision FOR label i (`len_match` — the mapping travels in
+    the object, an adapter cannot lose it by zipping). This is NOT one
+    distribution over the power set and NOT loop-bound; the contract is
+    «separate per-label distributions with update locality» — the
+    marginals do NOT determine a joint distribution (no statistical
+    independence is claimed or represented). NO qtype field."""
+
+    labels: tuple
+    decisions: tuple
+
+    def __post_init__(self):
+        if len(self.decisions) != len(self.labels):
+            raise ValueError(
+                f"len_match violated: {len(self.decisions)} decisions "
+                f"for {len(self.labels)} labels"
+            )
+
+
+@dataclass(frozen=True)
+class MultiDecisionResult:
+    """Mirror of `MultiDecisionResult` (QTypes.lean): the gated collection
+    — the label–decision mapping travels WITH the result (`len_match`
+    re-checked, mirror of the Lean structure's own proof obligation), so
+    the pairing is never re-zipped by a consumer. Each entry is the
+    per-label gate payload (`"argmax"`) or `None` (that label deferred)."""
+
+    labels: tuple
+    decisions: tuple
+
+    def __post_init__(self):
+        if len(self.decisions) != len(self.labels):
+            raise ValueError(
+                f"len_match violated: {len(self.decisions)} decisions "
+                f"for {len(self.labels)} labels"
+            )
 
 
 def _computed_fields(probs):
@@ -537,6 +626,80 @@ def _build_tool(engine_output):
     )
 
 
+def _validated_multi_output(engine_output):
+    """Validation for the `multi` branch: labels non-empty and
+    duplicate-free (`labels_nonempty`, `labels_nodup` — an empty
+    collection is NOT a question), every label a str, `len_match` between
+    labels and per-label distributions, each distribution exactly two
+    entries (the binary contract), strict ints on the [0,100] scale in
+    BOTH directions summing to 100. Returns (labels, probs)."""
+    if not isinstance(engine_output, dict):
+        raise TypeError(
+            f"engine_output must be a dict, got {type(engine_output).__name__}"
+        )
+    for key in ("labels", "probs"):
+        if key not in engine_output:
+            raise KeyError(f"engine_output missing {key!r}")
+    labels = engine_output["labels"]
+    _require_bool_free_str_list(labels, "labels")
+    if not labels:
+        raise ValueError(
+            "labels must be non-empty (labels_nonempty: an empty multi "
+            "collection is not a question)"
+        )
+    if len(set(labels)) != len(labels):
+        raise ValueError(f"labels must be unique (labels_nodup): {labels}")
+    probs = engine_output["probs"]
+    if not isinstance(probs, list):
+        raise TypeError(f"probs must be a list, got {type(probs).__name__}")
+    if len(probs) != len(labels):
+        raise ValueError(
+            f"labels/probs length mismatch (len_match): "
+            f"{len(probs)} != {len(labels)}"
+        )
+    for dist in probs:
+        if not isinstance(dist, list):
+            raise TypeError(
+                f"per-label distributions must be lists, got {dist!r}"
+            )
+        if len(dist) != 2:
+            raise ValueError(
+                f"each label's distribution must have exactly 2 entries "
+                f"(the binary contract), got {len(dist)}: {dist!r}"
+            )
+        total = 0
+        for p in dist:
+            _require_int(p, "per-label probs entry")
+            if not 0 <= p <= 100:
+                raise ValueError(
+                    f"per-label probs entry off the [0,100] scale "
+                    f"(both directions): {p}"
+                )
+            total += p
+        if total != 100:
+            raise ValueError(
+                f"per-label probs must sum to 100 (sum_100), got {total}"
+            )
+    return labels, probs
+
+
+def _build_multi(engine_output):
+    """`multi` branch: one `BinaryResponse` mirror per label over the
+    FIXED YES/NO pair, each label's `conf`/`argmax` COMPUTED from ITS OWN
+    distribution (`conf = max(probs)`, first-max argmax) — never
+    engine-supplied. The collection is per-label state, not loop-bound
+    and not a joint distribution over the power set."""
+    labels, probs = _validated_multi_output(engine_output)
+    decisions = []
+    for dist in probs:
+        conf, argmax = _computed_fields(dist)
+        decisions.append(BinaryDecision(
+            declared=NOUL_PAIR, probs=tuple(dist),
+            argmax=argmax, conf=conf,
+        ))
+    return MultiResponse(labels=tuple(labels), decisions=tuple(decisions))
+
+
 def build(q, engine_output):
     """Keyed dispatch: `ResponseFor q` — the return shape is determined by
     the request's question type, the SAME `q` the request arrived with."""
@@ -550,6 +713,8 @@ def build(q, engine_output):
         return _build_act(engine_output)
     if q == "tool":
         return _build_tool(engine_output)
+    if q == "multi":
+        return _build_multi(engine_output)
     if q in LATER_SLICES:
         raise NotImplementedError(
             f"q={q!r}: a later Phase B slice (B6), not this one"
@@ -750,4 +915,64 @@ def decide_tool_result(calib, response):
         ) else None,
         confLoopIdx=response.confidenceLoopIdx,
         calibLoopIdx=calib_loop,
+    )
+
+
+def multi_set(response, i, decision):
+    """Mirror of the canonical update constructor `multiSet` (QTypes.lean):
+    replace label i's decision, keeping the collection well-formed — the
+    label list and every OTHER label's decision are left untouched
+    (update locality, the structural half `multi_set_independent` proves;
+    the statistical half is NOT claimed). The index is a `Fin` over the
+    label list: strict int (`type(x) is int` — bool is not an index),
+    `0 <= i < len(labels)` — pointing at a non-existent label or a
+    negative index is a REJECTION, never a silent wrap. The replacement
+    must be a `BinaryDecision` (the per-label binary contract)."""
+    if not isinstance(response, MultiResponse):
+        raise TypeError(
+            "multi_set updates only MultiResponse objects, got "
+            f"{type(response).__name__}"
+        )
+    if not isinstance(decision, BinaryDecision):
+        raise TypeError(
+            "the replacement must be a BinaryDecision (the per-label "
+            f"binary contract), got {type(decision).__name__}"
+        )
+    _require_int(i, "update index")
+    if not 0 <= i < len(response.labels):
+        raise ValueError(
+            f"update index {i} out of the Fin range for "
+            f"{len(response.labels)} labels (phantom update unrepresentable)"
+        )
+    return MultiResponse(
+        labels=response.labels,
+        decisions=response.decisions[:i] + (decision,) + response.decisions[i + 1:],
+    )
+
+
+def decide_multi(tau, response):
+    """The honest multi gate call site (mirror of `gateMulti`): the
+    pointwise lift of the shared gate over each label's OWN confidence at
+    the collection's own threshold — the payload is `"argmax"` for a
+    deciding label, `None` for a deferring one; below the threshold EVERY
+    label defers (`gateMulti_defers_below`). There is NO loop binding and
+    NO calibration object: the Lean `gateMulti` takes the bare threshold
+    (the loop layer is binary-only K = 2 — generalizing the structural
+    loop layer to collections is its own recorded open question, no
+    calibration is invented here). The result carries the label–decision
+    mapping as a structure (`MultiDecisionResult`), never a re-zipped
+    pairing."""
+    _require_int(tau, "multi gate tau")
+    if not 0 <= tau <= 100:
+        raise ValueError(f"multi gate tau off the [0,100] scale: {tau}")
+    if not isinstance(response, MultiResponse):
+        raise TypeError(
+            "the multi gate gates only MultiResponse objects (separate "
+            f"objects), got {type(response).__name__}"
+        )
+    return MultiDecisionResult(
+        labels=response.labels,
+        decisions=tuple(
+            "argmax" if tau <= d.conf else None for d in response.decisions
+        ),
     )

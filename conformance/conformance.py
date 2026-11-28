@@ -1729,6 +1729,237 @@ def test_adapter_act_tool() -> None:
           f"reproduced through the adapter path")
 
 
+# ---- Phase B/B6: multi slice of the reference adapter (issue #23) ----
+
+def test_adapter_multi() -> None:
+    """B6 multi slice (issue #23): `build(\"multi\", …)` constructs the
+    mirror of `MultiResponse` from REAL engine readouts — one
+    `BinaryResponse` per label over the FIXED YES/NO pair with
+    `conf = max(probs)` COMPUTED (never engine-supplied) — and
+    `decide_multi` mirrors `gateMulti` (pointwise lift over the per-label
+    confidences at the collection's own threshold; the result carries the
+    label–decision mapping as a structure). `multi_set` mirrors the
+    canonical update constructor `multiSet` with a `Fin`-range index and
+    update locality, asserted differentially against the frozen
+    `multi_*` vectors with the expectation computed INDEPENDENTLY from
+    the engine. No Lean change, no frozen-vector change: the frozen
+    fields already cover the golden / update / differential surface."""
+    ref = ReferenceEngine(V["state"])
+    tau0 = CALIBRATION_THRESHOLD
+    labels = V["multi_labels"]
+
+    # the frozen collection: label i's decision is the loop-(i+1) readout
+    # (the SAME distributions the Lean export builds m0 from) — the
+    # adapter input is the engine's own per-label readout, differential
+    # against the frozen trace before anything is built
+    per_label = [ref.probs_at(i + 1) for i in range(len(labels))]
+    assert per_label == V["multi_probs_trace"], (
+        "engine per-label readouts != frozen multi_probs_trace"
+    )
+    m = adapter.build("multi", {"labels": list(labels),
+                                "probs": [list(p) for p in per_label]})
+    assert isinstance(m, adapter.MultiResponse)
+    assert m.labels == tuple(V["multi_labels"]), (
+        "labels != frozen multi_labels (order preserved)"
+    )
+    assert [list(d.probs) for d in m.decisions] == V["multi_probs_trace"], (
+        "per-label distributions != frozen multi_probs_trace"
+    )
+    assert [d.conf for d in m.decisions] == V["multi_conf_trace"], (
+        "computed per-label confs != frozen multi_conf_trace"
+    )
+    for d in m.decisions:
+        assert d.declared == ("YES", "NO"), (
+            "each label's decision carries the fixed YES/NO pair "
+            "(the BinaryResponse contract)"
+        )
+        assert d.argmax == d.probs.index(d.conf), (
+            "argmax must be the FIRST index attaining the confidence"
+        )
+        assert d.conf == max(d.probs), (
+            "conf must be COMPUTED as max(probs), never supplied"
+        )
+    assert not hasattr(m, "qtype"), (
+        "no qtype field: the dispatch key selected the constructor"
+    )
+    assert len(m.decisions) == len(m.labels) == 3, "len_match travels"
+
+    # -- gate: the pointwise lift (gateMulti mirror) at τ₀; the frozen
+    #    multi_gate_tau is "argmax"/"none" strings, the adapter result
+    #    carries "argmax"/None per label — compared entry-wise --
+    res = adapter.decide_multi(tau0, m)
+    assert isinstance(res, adapter.MultiDecisionResult)
+    assert res.labels == m.labels, (
+        "the label–decision mapping travels with the result"
+    )
+    expected = [None if g == "none" else g for g in V["multi_gate_tau"]]
+    assert list(res.decisions) == expected, (
+        f"adapter gateMulti != frozen multi_gate_tau: "
+        f"{list(res.decisions)} != {expected}"
+    )
+    # two INDEPENDENT expectations: the suite's own _gate_p mirror over
+    # the engine confs, and the frozen vector — adapter == mirror == frozen
+    mirror = [_gate_p(tau0, ref.conf_at(i + 1)) for i in range(len(labels))]
+    assert [g if g == "argmax" else "none" for g in res.decisions] == mirror, (
+        "adapter gateMulti != _gate_p mirror over the engine confs"
+    )
+    assert len(set(V["multi_gate_tau"])) == 2, (
+        "setup: the frozen gating must mix argmax and none (discriminating)"
+    )
+    # the payload is the gate's argmax verdict, never a distribution or
+    # a confidence
+    for got in res.decisions:
+        assert got in (None, "argmax")
+
+    # -- gateMulti_defers_below mirror: above EVERY label's confidence
+    #    the whole collection defers, no partial decisions --
+    below_tau = max(d.conf for d in m.decisions) + 1
+    assert all(d.conf < below_tau for d in m.decisions), (
+        "setup: below_tau must sit above every label's confidence"
+    )
+    assert list(adapter.decide_multi(below_tau, m).decisions) == [None] * 3, (
+        "below the threshold EVERY label must defer (gateMulti_defers_below)"
+    )
+
+    # -- update locality (multiSet mirror): label 2 (index 1) replaced by
+    #    the loop-4 readout's decision, other labels' decisions the SAME
+    #    objects, label list untouched --
+    solo = adapter.build("multi", {"labels": ["solo"],
+                                   "probs": [list(ref.probs_at(4))]})
+    d4 = solo.decisions[0]
+    assert d4.conf == ref.conf_at(4) == V["conf_trace"][3], (
+        "setup: the replacement decision is the loop-4 readout"
+    )
+    mU = adapter.multi_set(m, 1, d4)
+    assert list(mU.labels) == V["multi_labels_updated"], (
+        "the update must not touch the label list (frozen "
+        "multi_labels_updated)"
+    )
+    for j in range(len(labels)):
+        if j != 1:
+            assert mU.decisions[j] is m.decisions[j], (
+                f"position {j + 1} must be the SAME decision object — "
+                "update locality, never a re-zip"
+            )
+    assert mU.decisions[1] is d4
+    # differential: the updated collection's gate == frozen
+    # multi_gate_tau_updated == the independent engine expectation
+    got_u = adapter.decide_multi(tau0, mU)
+    assert list(got_u.decisions) == [
+        None if g == "none" else g for g in V["multi_gate_tau_updated"]
+    ], "updated gating != frozen multi_gate_tau_updated"
+    expected_u = [None if g == "none" else g for g in V["multi_gate_tau"]]
+    expected_u[1] = None if _gate_p(tau0, ref.conf_at(4)) == "none" \
+        else _gate_p(tau0, ref.conf_at(4))
+    assert list(got_u.decisions) == expected_u, (
+        "updated gating != independently computed expectation"
+    )
+    # the update is VISIBLE at position 2 and discriminating (the loop-4
+    # readout gates differently than label 2's original)
+    assert V["multi_gate_tau"][1] != V["multi_gate_tau_updated"][1], (
+        "setup: the label-2 update must be visible in the frozen vectors"
+    )
+    assert _gate_p(tau0, ref.conf_at(4)) != V["multi_gate_tau"][1], (
+        "setup: the loop-4 readout must gate differently than label 2's original"
+    )
+    # the updated collection stays well-formed
+    assert len(mU.decisions) == len(mU.labels) == 3
+
+    # -- rejections: build (validation, never silent coercion) --
+    def rejects(out, exc):
+        try:
+            adapter.build("multi", out)
+            raise AssertionError(
+                f"ill-formed multi output must raise {exc.__name__}: {out}")
+        except exc:
+            pass
+
+    good = {"labels": list(labels), "probs": [list(p) for p in per_label]}
+    assert adapter.build("multi", good).labels == tuple(labels)
+    # duplicate labels (labels_nodup) / empty collection (labels_nonempty)
+    rejects({**good, "labels": ["alpha", "alpha", "beta"]}, ValueError)
+    rejects({**good, "labels": []}, ValueError)
+    # len_match / non-str labels / non-list labels or probs
+    rejects({**good, "labels": ["alpha", "beta"]}, ValueError)
+    rejects({**good, "labels": ["alpha", 2, "gamma"]}, TypeError)
+    rejects({**good, "labels": "alpha"}, TypeError)
+    rejects({**good, "probs": "32"}, TypeError)
+    # per-label arity / non-list distribution
+    rejects({**good, "probs": [[32, 68], [84, 16], [36, 64, 0]]}, ValueError)
+    rejects({**good, "probs": [[32, 68], [84, 16], "36"]}, TypeError)
+    # bool / float / str entries (strict `type(x) is int`)
+    for out in ({**good, "probs": [[True, 68], [84, 16], [36, 64]]},
+                {**good, "probs": [[32, 68], [84, 16], [36.0, 64]]},
+                {**good, "probs": [[32, 68], [84, 16], ["36", 64]]}):
+        rejects(out, TypeError)
+    # off the [0,100] scale in BOTH directions / non-normalized (sum_100)
+    for out in ({**good, "probs": [[101, 68], [84, 16], [36, 64]]},
+                {**good, "probs": [[-1, 68], [84, 16], [36, 64]]},
+                {**good, "probs": [[32, 68], [84, 16], [36, 63]]}):
+        rejects(out, ValueError)
+    # missing key / non-dict
+    rejects({"labels": list(labels)}, KeyError)
+    rejects([("labels", labels)], TypeError)
+
+    # -- rejections: multi_set (Fin range, strict index; separate objects) --
+    noul_r = adapter.build("noul", {"loopIdx": 5, "declared": ["YES", "NO"],
+                                    "probs": [50, 50]})
+    for idx, exc in ((3, ValueError), (-1, ValueError), (True, TypeError),
+                     (1.0, TypeError), ("1", TypeError)):
+        try:
+            adapter.multi_set(m, idx, d4)
+            raise AssertionError(f"bad index {idx!r} must raise {exc.__name__}")
+        except exc:
+            pass
+    try:
+        adapter.multi_set(m, 1, list(d4.probs))
+        raise AssertionError("a non-BinaryDecision replacement must be rejected")
+    except TypeError:
+        pass
+    try:
+        adapter.multi_set(noul_r, 1, d4)
+        raise AssertionError("multi_set must only update MultiResponse objects")
+    except TypeError:
+        pass
+
+    # -- rejections: decide_multi (strict tau, type guard) --
+    for tau_v, exc in ((True, TypeError), (75.0, TypeError), ("75", TypeError),
+                       (-1, ValueError), (101, ValueError)):
+        try:
+            adapter.decide_multi(tau_v, m)
+            raise AssertionError(f"bad tau {tau_v!r} must raise {exc.__name__}")
+        except exc:
+            pass
+    try:
+        adapter.decide_multi(tau0, noul_r)
+        raise AssertionError("the multi gate must not gate a NoulResponse")
+    except TypeError:
+        pass
+    try:
+        adapter.multi_set(noul_r, 1, d4)
+        raise AssertionError("multi_set must only update MultiResponse objects")
+    except TypeError:
+        pass
+    try:
+        adapter.decide_multi(tau0, d4)
+        raise AssertionError("the multi gate must not gate a BinaryDecision")
+    except TypeError:
+        pass
+    # a len_match violation cannot even be CONSTRUCTED (the result
+    # structure re-checks it — the mirror of the Lean proof obligation)
+    try:
+        adapter.MultiDecisionResult(labels=("a", "b"), decisions=("argmax",))
+        raise AssertionError("len_match violation must be rejected")
+    except ValueError:
+        pass
+
+    print(f"ADAPTER MULTI: {len(labels)} labels, per-label confs "
+          f"{[d.conf for d in m.decisions]}, gate {list(res.decisions)}; "
+          f"update locality verified (position 2 replaced by the loop-4 "
+          f"readout, other labels the same objects); all frozen multi_* "
+          f"fields re-derived through the adapter path")
+
+
 def test_reference_matches_frozen_trace() -> None:
     ref = ReferenceEngine(V["state"])
     got = [ref.conf_at(t) for t in range(1, SPEC_T + 1)]
@@ -1864,6 +2095,7 @@ def main() -> int:
         test_adapter_bridge_report,
         test_adapter_score,
         test_adapter_act_tool,
+        test_adapter_multi,
         test_reference_matches_frozen_trace,
         test_ishard_matches_frozen_and_boundary,
         test_gate_matches_frozen_and_boundary,
