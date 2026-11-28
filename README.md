@@ -130,16 +130,20 @@ theorems are `rfl`), with a non-degeneracy witness per member
 (`ResponseFor_inhabited`). The contracts keep their distinct
 invariants by definition — this is a typed unification of the
 assignment, NOT a flattening. The per-contract gates stay (their
-payload and provenance types differ); the production adapter is a
-separate later milestone (#16 Phase B).
+payload and provenance types differ); the production adapter is built
+on top of the family and bridge-integrated (Phase B, #18–#23 — see
+Version history).
 
-## Proof audit (current as of v2.0-a)
+## Proof audit (current as of v2.1, re-verified 2026-11-28)
 
 All 199 top-level declarations of the library (`Basic`, `Defer`,
 `Loop`, `QTypes`) were checked with `#print axioms`: every checked
 dependency set is a subset of
 `[propext, Quot.sound, Classical.choice]` — **no `sorryAx`, no new
-axioms**. Zero `sorry`/`admit` in any module. Full `lake build` PASS;
+axioms**. Zero `sorry`/`admit` in any module. The count and the suite
+number were re-verified against the current tree after Phase B (which
+changed no Lean code: 199 declarations, 28 tests). Full `lake build`
+PASS;
 full conformance suite (28 tests, INCLUDING the Lean export — no
 `--fast`) passes with exit 0; both CI jobs green. Scope boundary: the
 formal claims are the ones named in this README; conformance tests
@@ -300,6 +304,34 @@ python3 conformance/conformance.py --fast # skip the Lean export
 
 ## Version history
 
+* **v2.1** (2026-11-28, #18–#23 Phase B — recorded as ONE merged entry
+  with per-slice SHAs, per the recorded choice): the production Python
+  reference adapter, built dispatch-keyed over `ResponseFor` and
+  bridge-integrated into the conformance suite (suite 22 → 28 tests,
+  README + Files updated per slice; no Lean change, no frozen-vector
+  change anywhere in the milestone). Design note first (#18,
+  `ba073d0` — docs/phase-b-adapter-design.md), then one slice per
+  issue: **B2** (#19, `235e100`) skeleton + `choice`/`noul` (pairing
+  by construction, computed conf/argmax, strict-int, honest call site
+  `decide()` mirroring `gateLoop`); **B3** (#20, `d93409b`) bridge
+  integration (`test_adapter_bridge_report` — adapter output asserted
+  against the frozen vectors, per-loop, both choice and noul;
+  `gate_calib_cases` re-derived through the adapter path); **B4**
+  (#21, `f0f8c84`) `score` slice (value = exact-EV floor computed
+  from the engine's distribution, `ScoreCalib` as a separate object,
+  payload = the value, both loop indices in the result mirror);
+  **B5** (#22, `6c6a516`) `act` + `tool` slices (exact cost
+  numerators + selection computed — minimum exact cost,
+  first-declared tie-break, never the floored `expectedCost`;
+  tool selection validated by vocabulary membership); **B6**
+  (#23, `672ec36`) `multi` slice (one `BinaryDecision` per label over
+  the fixed YES/NO pair, computed per-label conf/argmax, `multi_set`
+  with update locality, bare-threshold `gateMulti` lift — all six
+  `QType` branches produce; `LATER_SLICES` empty).
+* **v2.0-b** (2026-11-27, #16 review follow-ups, documentation only:
+  `131768d`): README no longer claims `ResponseFor` is a future
+  target; proof-audit test count corrected 20 → 22 (matching the
+  executed suite at the time).
 * **v2.0-a** (2026-11-27, #16 Phase A): `ResponseFor : QType → Type` —
   the typed unification. A dependent family mapping each question type
   to ITS OWN contract structure (six `rfl` dispatch theorems — no
@@ -435,3 +467,6 @@ longer holds fails the build loudly instead of silently drifting.
   binding exists at the structural level); the `*Result` mirrors carry
   BOTH loop indices (binary/score/act/tool)
 * `.github/workflows/ci.yml` — `lean-spec` + `conformance` jobs
+* `docs/phase-b-adapter-design.md` — the Phase B design note (#18
+  spike, `ba073d0`): dispatch-keyed pairing, slice plan, risks, the
+  conformance-report shape the adapter feeds
