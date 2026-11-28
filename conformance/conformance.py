@@ -33,6 +33,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import adapter  # Phase B/B2 reference adapter (issue #19)
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 VECTORS_PATH = REPO_ROOT / "test-vectors" / "tier1.json"
 EXPORT_PATH = REPO_ROOT / "conformance" / "ExportVectors.lean"
@@ -905,6 +908,182 @@ def test_tool_rejects() -> None:
         pass
 
 
+# ---- Phase B/B2: reference adapter skeleton (issue #19) ----
+
+def test_adapter_build_choice_noul() -> None:
+    """Positive cases: both producing branches construct responses from
+    REAL engine output (the reference engine's per-loop readout), the
+    gate-visible fields are computed (conf = max(probs), first-max
+    argmax), the noul branch yields exactly the YES/NO pair, objects
+    carry no qtype field, and decide() at the honest call site mirrors
+    gate_loop (conformance.py's own mirror) — same q, same response
+    object, loop index read from the object."""
+    ref = ReferenceEngine(V["state"])
+    tau = CALIBRATION_THRESHOLD
+    calib_choice = {"qtype": "choice", "loopIdx": 2, "tau": tau}
+    calib_noul = {"qtype": "noul", "loopIdx": 3, "tau": tau}
+    for t in (1, 2, SPEC_T):
+        out = {
+            "loopIdx": t,
+            "declared": ["a", "b"],
+            "probs": ref.probs_at(t),
+        }
+        # -- choice: the shared Response core, computed conf/argmax --
+        r = adapter.build("choice", out)
+        assert isinstance(r, adapter.ChoiceResponse)
+        assert r.declared == ("a", "b") and r.probs == tuple(ref.probs_at(t))
+        assert r.conf == max(r.probs) == ref.conf_at(t), (
+            "conf must be computed as max(probs) — the mirror of binConf_is_top"
+        )
+        first_max = r.probs.index(r.conf)
+        assert r.argmax == first_max == (0 if r.probs[0] >= 50 else 1), (
+            "argmax must be the first index attaining the confidence"
+        )
+        assert not hasattr(r, "qtype"), (
+            "no qtype field: the dispatch key selected the constructor "
+            "(pairing by construction, not by a validator)"
+        )
+        # -- noul: same engine output relabeled to the declared pair --
+        out_noul = {"loopIdx": t, "declared": ["YES", "NO"], "probs": ref.probs_at(t)}
+        n = adapter.build("noul", out_noul)
+        assert isinstance(n, adapter.NoulResponse)
+        assert n.declared == ("YES", "NO"), "noul must carry the declared_pair"
+        assert n.conf == max(n.probs) and n.conf == r.conf, (
+            "same readout: noul conf = max(p, 100-p), identical to choice"
+        )
+        assert not hasattr(n, "qtype")
+        # -- honest gate call site: decide() mirrors gate_loop --
+        # (gate_loop mirrors Decision as "none"; decide mirrors the Option
+        # as None — normalize before comparing)
+        expected = gate_loop(calib_choice, {"qtype": "choice", "loopIdx": t,
+                                            "conf": r.conf})
+        expected = None if expected == "none" else expected
+        assert adapter.decide(calib_choice, "choice", r) == expected, (
+            "adapter decide() must agree with the gateLoop mirror at the "
+            "honest call site"
+        )
+        n_gate = gate_loop(calib_noul, {"qtype": "noul", "loopIdx": t, "conf": n.conf})
+        assert adapter.decide(calib_noul, "noul", n) == (
+            None if n_gate == "none" else n_gate
+        )
+    # no calibration record: no decision (gateOptCalib none)
+    r2 = adapter.build("choice", {"loopIdx": 2, "declared": ["a", "b"],
+                                  "probs": ref.probs_at(2)})
+    assert adapter.decide(None, "choice", r2) is None
+    # wrong qtype / wrong loop at the call site: abstains (the conjunctive
+    # guard has TWO conditions — the twin of wrong_type_structural and
+    # wrong_loop_structural)
+    tau_high = r2.conf  # WOULD decide absent the guards — setup assertion
+    assert _gate_p(tau_high, r2.conf) == "argmax"
+    assert adapter.decide({"qtype": "noul", "loopIdx": 2, "tau": tau_high},
+                          "choice", r2) is None
+    assert adapter.decide({"qtype": "choice", "loopIdx": 2 + 1, "tau": tau_high},
+                          "choice", r2) is None
+    # at its own type and loop: decides with the argmax payload semantics
+    assert adapter.decide({"qtype": "choice", "loopIdx": 2, "tau": tau_high},
+                          "choice", r2) == "argmax"
+    # below the threshold: defers (gateCalib_defers_below)
+    assert adapter.decide({"qtype": "choice", "loopIdx": 2, "tau": r2.conf + 1},
+                          "choice", r2) is None
+    # slice boundary: the later branches are EXPLICIT (NotImplementedError),
+    # an unknown qtype is a ValueError — never a silent fallback
+    for later in adapter.LATER_SLICES:
+        try:
+            adapter.build(later, {"loopIdx": 1, "declared": ["a", "b"],
+                                  "probs": [50, 50]})
+            raise AssertionError(f"{later!r} must raise NotImplementedError")
+        except NotImplementedError:
+            pass
+    try:
+        adapter.build("binary", {"loopIdx": 1, "declared": ["a", "b"],
+                                 "probs": [50, 50]})
+        raise AssertionError("unknown qtype must raise ValueError")
+    except ValueError:
+        pass
+
+
+def test_adapter_rejects() -> None:
+    """Rejection cases (issue #19 acceptance criteria): bool in int fields
+    (strict `type(x) is int`, not isinstance), float/str values, out-of-
+    bounds in BOTH directions, non-normalized weights, K < 2, duplicate
+    declared options, wrong-vocabulary noul payload, negative loop index,
+    and missing/ill-typed engine_output — every one a REJECTION
+    (exception), never a silent coercion."""
+    good = {"loopIdx": 3, "declared": ["a", "b"], "probs": [70, 30]}
+    # baseline sanity: the good output builds on both branches
+    assert adapter.build("choice", dict(good)).conf == 70
+    assert adapter.build("noul", {**good, "declared": ["YES", "NO"]}).conf == 70
+
+    def rejects(q, out, exc):
+        try:
+            adapter.build(q, out)
+            raise AssertionError(f"{q}: ill-formed output must raise {exc.__name__}: {out}")
+        except exc:
+            pass
+
+    # bool in int fields (bool is an int subclass — isinstance would pass)
+    for out in (
+        {**good, "probs": [True, 30]}, {**good, "probs": [70, False]},
+        {**good, "loopIdx": True}, {**good, "declared": [True, "b"]},
+    ):
+        rejects("choice", out, TypeError)
+    # float and str values in the distribution and the loop index
+    for out in (
+        {**good, "probs": [70.0, 30]}, {**good, "probs": ["70", 30]},
+        {**good, "loopIdx": 3.0}, {**good, "loopIdx": "3"},
+        {**good, "declared": ["a", 2]},
+    ):
+        rejects("choice", out, TypeError)
+    # out-of-scale in BOTH directions (mirror of the [0,100] bounds)
+    for bad_probs in ([101, -1], [-5, 105], [70, 31], [70, 29]):
+        # [70,31]/[70,29]: sums 101/99 — non-normalized weights
+        rejects("choice", {**good, "probs": bad_probs}, ValueError)
+    # K < 2: one option is not a question (k_ge_2)
+    rejects("choice", {"loopIdx": 3, "declared": ["a"], "probs": [100]}, ValueError)
+    # duplicate declared options (declared_nodup)
+    rejects("choice", {"loopIdx": 3, "declared": ["a", "a"], "probs": [50, 50]},
+            ValueError)
+    # declared/probs length mismatch
+    rejects("choice", {"loopIdx": 3, "declared": ["a", "b", "c"], "probs": [50, 50]},
+            ValueError)
+    # negative loop index: mirror of Nat — never silently accepted
+    rejects("choice", {**good, "loopIdx": -1}, ValueError)
+    rejects("noul", {**good, "declared": ["YES", "NO"], "loopIdx": -2}, ValueError)
+    # wrong-vocabulary noul payload: well-formed but NOT the declared pair
+    for wrong in (["yes", "no"], ["YES"], ["A", "B"], ["YES", "NO", "MAYBE"]):
+        if len(wrong) < 2 or len(set(wrong)) < 2:
+            rejects("noul", {"loopIdx": 3, "declared": wrong,
+                             "probs": [70, 30]}, ValueError)
+        elif len(wrong) != 2:
+            rejects("noul", {"loopIdx": 3, "declared": wrong,
+                             "probs": [40, 30, 30]}, ValueError)
+        else:
+            rejects("noul", {"loopIdx": 3, "declared": wrong,
+                             "probs": [70, 30]}, ValueError)
+    # missing key / ill-typed engine_output
+    rejects("choice", {"loopIdx": 3, "declared": ["a", "b"]}, KeyError)
+    rejects("choice", [("loopIdx", 3)], TypeError)
+    # decide(): bool tau / bool loopIdx in the calibration are rejected too
+    r = adapter.build("choice", dict(good))
+    for calib in ({"qtype": "choice", "loopIdx": 3, "tau": True},
+                  {"qtype": "choice", "loopIdx": True, "tau": 75},
+                  {"qtype": "choice", "loopIdx": 3, "tau": 101},
+                  {"qtype": "choice", "loopIdx": 3, "tau": -1}):
+        try:
+            adapter.decide(calib, "choice", r)
+            raise AssertionError(f"ill-formed calib must be rejected: {calib}")
+        except (TypeError, ValueError) as e:
+            assert type(e) in (TypeError, ValueError)
+    # calib tau > 100 / < 0 raise ValueError specifically (scale bound)
+    for calib in ({"qtype": "choice", "loopIdx": 3, "tau": 101},
+                  {"qtype": "choice", "loopIdx": 3, "tau": -1}):
+        try:
+            adapter.decide(calib, "choice", r)
+            raise AssertionError(f"tau off scale must raise ValueError: {calib}")
+        except ValueError:
+            pass
+
+
 def test_reference_matches_frozen_trace() -> None:
     ref = ReferenceEngine(V["state"])
     got = [ref.conf_at(t) for t in range(1, SPEC_T + 1)]
@@ -1035,6 +1214,8 @@ def main() -> int:
         test_act_rejects,
         test_tool_golden,
         test_tool_rejects,
+        test_adapter_build_choice_noul,
+        test_adapter_rejects,
         test_reference_matches_frozen_trace,
         test_ishard_matches_frozen_and_boundary,
         test_gate_matches_frozen_and_boundary,
