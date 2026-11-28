@@ -140,7 +140,7 @@ All 199 top-level declarations of the library (`Basic`, `Defer`,
 dependency set is a subset of
 `[propext, Quot.sound, Classical.choice]` — **no `sorryAx`, no new
 axioms**. Zero `sorry`/`admit` in any module. Full `lake build` PASS;
-full conformance suite (26 tests, INCLUDING the Lean export — no
+full conformance suite (27 tests, INCLUDING the Lean export — no
 `--fast`) passes with exit 0; both CI jobs green. Scope boundary: the
 formal claims are the ones named in this README; conformance tests
 mirror them in Python and are differential (frozen == Lean == Python).
@@ -275,7 +275,7 @@ run recorded in CI logs.
 
 ```
 lake build                                # the proofs (zero errors)
-python3 conformance/conformance.py        # 26 tests incl. the Lean export, exit 0
+python3 conformance/conformance.py        # 27 tests incl. the Lean export, exit 0
 python3 conformance/conformance.py --fast # skip the Lean export
 ```
 
@@ -409,11 +409,19 @@ longer holds fails the build loudly instead of silently drifting.
 * `conformance/gen_vectors.py` — derives and freezes the vectors (run once)
 * `conformance/ExportVectors.lean` — computes expected values from the Lean definitions
 * `conformance/conformance.py` — three-way differential conformance suite
-* `conformance/adapter.py` — Phase B reference adapter (issues #19/#20/#21):
-  `build(q, engine_output)` keyed dispatch, `choice`/`noul`/`score` slices;
-  its output feeds the conformance report differentially against the frozen
-  vectors (`test_adapter_bridge_report`, `test_adapter_score` in
-  `conformance.py`); the score branch computes the value from the engine's
-  distribution (exact-EV floor, the `scoreOfDist` mirror) and gates through
-  `decide_score` (payload = the value, `gateScore` mirror)
+* `conformance/adapter.py` — Phase B reference adapter (issues #19/#20/#21/#22):
+  `build(q, engine_output)` keyed dispatch, `choice`/`noul`/`score`/`act`/`tool`
+  slices (`multi` is the last, B6); its output feeds the conformance report
+  differentially against the frozen vectors (`test_adapter_bridge_report`,
+  `test_adapter_score`, `test_adapter_act_tool` in `conformance.py`); the
+  score branch computes the value from the engine's distribution (exact-EV
+  floor, the `scoreOfDist` mirror) and gates through `decide_score` (payload
+  = the value, `gateScore` mirror); the act branch computes the exact cost
+  numerators AND the selection (minimum exact cost, first-declared
+  tie-break — never the floored `expectedCost`) and gates through
+  `decide_act` (payload = the selected action, `gateAct` mirror); the tool
+  branch validates the engine's selection by vocabulary membership and
+  gates through `decide_tool` (payload = the selected tool, `gateTool`
+  mirror); every gate abstains below τ, on a wrong loop, and with no
+  calibration; the `*Result` mirrors carry BOTH loop indices
 * `.github/workflows/ci.yml` — `lean-spec` + `conformance` jobs

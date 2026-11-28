@@ -1413,6 +1413,322 @@ def test_adapter_score() -> None:
           f"all five frozen gate branches reproduced through the adapter path")
 
 
+def test_adapter_act_tool() -> None:
+    """B5 act/tool slices (issue #22): `build(\"act\", …)` / `build(\"tool\", …)`
+    construct the mirrors of `ActResponse` / `ToolResponse` from REAL
+    engine readouts — the exact cost numerators and the SELECTED action
+    COMPUTED (minimum exact cost, first-declared tie-break; never the
+    floored expected cost and never engine-supplied), the tool selection
+    validated by vocabulary membership — and `decide_act` / `decide_tool`
+    mirror `gateAct` / `gateTool` in ALL frozen branches (below-τ,
+    positive with the ACTION/TOOL payload, wrong-loop, boundary τ=100,
+    the first-declared tie-break), compared against the frozen act/tool
+    vectors. The `*Result` mirrors carry BOTH loop indices. No Lean
+    change, no frozen-vector change: the frozen fields already cover
+    every gate branch; this test adds the adapter-side path."""
+    ref = ReferenceEngine(V["state"])
+    tau0 = CALIBRATION_THRESHOLD
+
+    # the frozen act demo collection: costs 10/30/20 at weight 100 per
+    # entry — the SAME distributions the Lean export constructs
+    # actResp/actRespPos/actRespBnd from (demoDists), so every frozen
+    # field is re-derived, none transcribed
+    ACTIONS = ["deploy", "rollback", "wait"]
+    DEMO_DISTS = [[[10, 100]], [[30, 100]], [[20, 100]]]
+
+    def act_out(conf_loop, dists, confidence, actions=None):
+        return {"loopIdx": conf_loop,
+                "actions": list(ACTIONS if actions is None else actions),
+                "costDists": [list(d) for d in dists],
+                "confidence": confidence}
+
+    # -- construction: numerators + selection computed, confidence
+    #    separate, loop trusted --
+    main = adapter.build("act", act_out(5, DEMO_DISTS, ref.raw_at(5)))
+    assert isinstance(main, adapter.ActResponse)
+    assert list(main.actions) == V["act_actions"], (
+        "actions != frozen act_actions"
+    )
+    assert list(main.exactCostNums) == V["act_cost_nums"], (
+        "computed exact numerators != frozen act_cost_nums"
+    )
+    assert main.selected == V["act_selected"], (
+        "computed selection != frozen act_selected"
+    )
+    assert main.confidence == V["act_conf"] == ref.raw_at(5), (
+        "confidence != frozen act_conf"
+    )
+    assert main.confidenceLoopIdx == V["act_conf_loop"] == 5
+    assert not hasattr(main, "qtype"), (
+        "no qtype field: the dispatch key selected the constructor"
+    )
+    # separation made visible in the data: the confidence is NOT derived
+    # from the selected cost (20 vs a cost of 10)
+    assert main.confidence != main.exactCostNums[0] // 100
+
+    # -- selection lives on the EXACT numerator, never the floored
+    #    expected cost: ["a"] exact 150 / ["b"] exact 100 both floor to
+    #    expectedCost 1 — a floor-based selection would tie and take the
+    #    first-declared "a"; the exact-cost minimum is "b" --
+    floor_pair = adapter.build("act", act_out(
+        2, [[[3, 50], [0, 50]], [[1, 50], [1, 50]]], ref.raw_at(2),
+        actions=["a", "b"]))
+    assert [c // 100 for c in floor_pair.exactCostNums] == [1, 1], (
+        "test setup: the floored expected costs must tie at 1"
+    )
+    assert list(floor_pair.exactCostNums) == [150, 100], (
+        "test setup: the exact numerators must differ (150 vs 100)"
+    )
+    assert floor_pair.selected == "b", (
+        "selection must be by the EXACT cost, not the floored expectedCost"
+    )
+
+    # -- gate, branch 1: below-τ abstention (frozen act_gate) --
+    assert V["act_gate"] == "none" and V["act_gate_payload"] is None
+    assert adapter.decide_act({"tau": tau0, "loopIdx": 5}, main) is None, (
+        "below the threshold the act gate must abstain"
+    )
+    # no calibration record: no decision
+    assert adapter.decide_act(None, main) is None
+
+    # -- gate, branch 2: positive path, payload = the SELECTED ACTION --
+    # (conf = the loop-2 readout 84 ≥ tau0)
+    pos = adapter.build("act", act_out(2, DEMO_DISTS, ref.raw_at(2)))
+    assert isinstance(pos, adapter.ActResponse)
+    assert pos.confidence == V["conf_trace"][1], (
+        "setup: the loop-2 readout is the frozen positive-path confidence"
+    )
+    got = adapter.decide_act({"tau": tau0, "loopIdx": 2}, pos)
+    assert V["act_gate_positive"] == "decided" and got is not None
+    assert got == V["act_gate_payload_positive"] == pos.selected == "deploy", (
+        "the payload must be the computed SELECTED ACTION "
+        "(frozen act_gate_payload_positive)"
+    )
+    assert got != pos.confidence, (
+        "the payload must never be the confidence (84)"
+    )
+    # setup assertion: the threshold really decides at the own loop —
+    # the wrong-loop case below isolates the index guard
+    assert tau0 <= pos.confidence, (
+        "test setup: tau0 must decide at loop 2 absent the index check"
+    )
+    # -- gate, branch 3: wrong loop abstains despite 84 >= tau0
+    # (frozen act_gate_wrong_loop; calib bound to loop 5) --
+    assert V["act_gate_wrong_loop"] == "none"
+    assert adapter.decide_act({"tau": tau0, "loopIdx": 5}, pos) is None
+    # an index-ISOLATING threshold: tau = the confidence itself would
+    # decide at loop 2; at the wrong loop it still must not
+    assert adapter.decide_act({"tau": pos.confidence, "loopIdx": 5},
+                              pos) is None
+
+    # -- gate, branch 4: the SCALE BOUNDARY (τ = 100 with a constructed
+    # confidence AT 100; the trace readouts never reach 100) --
+    bnd = adapter.build("act", act_out(2, DEMO_DISTS, 100))
+    assert isinstance(bnd, adapter.ActResponse)
+    assert V["act_gate_boundary"] == "decided"
+    assert adapter.decide_act({"tau": 100, "loopIdx": 2}, bnd) \
+        == V["act_gate_payload_boundary"] == bnd.selected == "deploy"
+    # -- gate, branch 5: the FIRST-DECLARED tie-break (frozen tie fields):
+    # two actions with EQUAL exact numerators [3000, 3000] — the first
+    # declared (rollback) is selected, computed never supplied --
+    tie = adapter.build("act", act_out(
+        2, [[[30, 100]], [[30, 100]]], ref.raw_at(2),
+        actions=["rollback", "wait"]))
+    assert isinstance(tie, adapter.ActResponse)
+    assert list(tie.actions) == V["act_tie_actions"]
+    assert list(tie.exactCostNums) == V["act_tie_cost_nums"] == [3000, 3000], (
+        "computed tie numerators != frozen act_tie_cost_nums"
+    )
+    assert tie.selected == V["act_tie_selected"] == "rollback", (
+        "the FIRST-declared action must win the exact-cost tie"
+    )
+    assert V["act_tie_gate_positive"] == "decided"
+    assert adapter.decide_act({"tau": tau0, "loopIdx": 2}, tie) \
+        == V["act_tie_gate_payload_positive"] == "rollback"
+
+    # -- the result shape (gateActResult mirror): BOTH indices travel --
+    res = adapter.decide_act_result({"tau": tau0, "loopIdx": 2}, pos)
+    assert res.action == "deploy" and res.confLoopIdx == 2 and res.calibLoopIdx == 2
+    assert res.action == adapter.decide_act({"tau": tau0, "loopIdx": 2}, pos)
+    # on abstention the pairing still travels (conf loop 2 vs calib loop 5)
+    res_n = adapter.decide_act_result({"tau": tau0, "loopIdx": 5}, pos)
+    assert res_n.action is None and res_n.confLoopIdx == 2 and res_n.calibLoopIdx == 5
+    assert res_n.action == adapter.decide_act({"tau": tau0, "loopIdx": 5}, pos)
+
+    # -- tool construction: selection validated by vocabulary membership --
+    TOOLS = ["search", "read", "write"]
+
+    def tool_out(conf_loop, confidence, selected="read"):
+        return {"loopIdx": conf_loop, "tools": list(TOOLS),
+                "selected": selected, "confidence": confidence}
+
+    tmain = adapter.build("tool", tool_out(5, ref.raw_at(5)))
+    assert isinstance(tmain, adapter.ToolResponse)
+    assert list(tmain.tools) == V["tool_tools"]
+    assert tmain.selected == V["tool_selected"] == "read"
+    assert tmain.confidence == V["tool_conf"] == ref.raw_at(5)
+    assert tmain.confidenceLoopIdx == V["tool_conf_loop"] == 5
+    assert not hasattr(tmain, "qtype")
+    # no tie-break rule: the selection is the engine's, membership is ours
+
+    # -- tool gate, all frozen branches --
+    assert V["tool_gate"] == "none" and V["tool_gate_payload"] is None
+    assert adapter.decide_tool({"tau": tau0, "loopIdx": 5}, tmain) is None
+    assert adapter.decide_tool(None, tmain) is None
+    tpos = adapter.build("tool", tool_out(2, ref.raw_at(2)))
+    assert tpos.confidence == V["conf_trace"][1]
+    tgot = adapter.decide_tool({"tau": tau0, "loopIdx": 2}, tpos)
+    assert V["tool_gate_positive"] == "decided" and tgot is not None
+    assert tgot == V["tool_gate_payload_positive"] == tpos.selected == "read"
+    assert tgot != tpos.confidence
+    assert V["tool_gate_wrong_loop"] == "none"
+    assert adapter.decide_tool({"tau": tau0, "loopIdx": 5}, tpos) is None
+    assert adapter.decide_tool({"tau": tpos.confidence, "loopIdx": 5},
+                               tpos) is None
+    tbnd = adapter.build("tool", tool_out(2, 100))
+    assert V["tool_gate_boundary"] == "decided"
+    assert adapter.decide_tool({"tau": 100, "loopIdx": 2}, tbnd) \
+        == V["tool_gate_payload_boundary"] == "read"
+    # result shape (gateToolResult mirror): BOTH indices travel
+    tres = adapter.decide_tool_result({"tau": tau0, "loopIdx": 2}, tpos)
+    assert tres.selected == "read" and tres.confLoopIdx == 2 and tres.calibLoopIdx == 2
+    tres_n = adapter.decide_tool_result({"tau": tau0, "loopIdx": 5}, tpos)
+    assert (tres_n.selected is None and tres_n.confLoopIdx == 2
+            and tres_n.calibLoopIdx == 5)
+
+    # -- rejections (validation, never silent coercion): act --
+    good = act_out(5, DEMO_DISTS, 55)
+
+    def rejects(q, out, exc):
+        try:
+            adapter.build(q, out)
+            raise AssertionError(
+                f"ill-formed {q} output must raise {exc.__name__}: {out}")
+        except exc:
+            pass
+
+    assert adapter.build("act", good).selected == "deploy"
+    # bool in int fields (strict `type(x) is int`; isinstance would pass)
+    for out in (act_out(True, DEMO_DISTS, 55), act_out(5, DEMO_DISTS, True),
+                {**good, "costDists": [[[True, 100]], [[30, 100]], [[20, 100]]]},
+                {**good, "costDists": [[[10, True]], [[30, 100]], [[20, 100]]]},
+                {**good, "actions": [True, "rollback", "wait"]}):
+        rejects("act", out, TypeError)
+    # float / str fields
+    for out in (act_out(5.0, DEMO_DISTS, 55), act_out(5, DEMO_DISTS, 55.0),
+                act_out(5, DEMO_DISTS, "55"),
+                {**good, "costDists": [[[10.0, 100]], [[30, 100]], [[20, 100]]]},
+                {**good, "costDists": [[["10", 100]], [[30, 100]], [[20, 100]]]}):
+        rejects("act", out, TypeError)
+    # cost off the act's OWN scale in BOTH directions (MAX_COST = 100)
+    for out in ({**good, "costDists": [[[101, 100]], [[30, 100]], [[20, 100]]]},
+                {**good, "costDists": [[[-1, 100]], [[30, 100]], [[20, 100]]]}):
+        rejects("act", out, ValueError)
+    # negative weights (mirror of Nat) / non-normalized (distCostSum = 100)
+    for out in ({**good, "costDists": [[[10, -1], [0, 101]], [[30, 100]], [[20, 100]]]},
+                {**good, "costDists": [[[10, 99]], [[30, 100]], [[20, 100]]]},
+                {**good, "costDists": [[[10, 101]], [[30, 100]], [[20, 100]]]}):
+        rejects("act", out, ValueError)
+    # vocabulary: non-empty, duplicate-free (actions_nodup/nonempty)
+    rejects("act", {**good, "actions": []}, ValueError)
+    rejects("act", {**good, "actions": ["a", "a", "b"]}, ValueError)
+    # len_match: costDists must match actions one-to-one
+    rejects("act", {**good, "actions": ["a", "b"]}, ValueError)
+    # entry arity / non-list distributions
+    rejects("act", {**good, "costDists": [[[10]]], "actions": ["a"]}, ValueError)
+    rejects("act", {**good, "costDists": [[10, 100]], "actions": ["a"]}, TypeError)
+    rejects("act", {**good, "costDists": "10"}, TypeError)
+    # negative loop index (mirror of Nat) / missing key / non-dict
+    rejects("act", {**good, "loopIdx": -1}, ValueError)
+    rejects("act", {"loopIdx": 5, "actions": ["a"], "costDists": [[[0, 100]]]}, KeyError)
+    rejects("act", [("loopIdx", 5)], TypeError)
+
+    # -- rejections: tool --
+    tgood = tool_out(5, 55)
+    assert adapter.build("tool", tgood).selected == "read"
+    # OUT OF VOCABULARY: a selection the declared list does not contain is
+    # a rejection, never a coercion (sel_mem)
+    rejects("tool", {**tgood, "selected": "delete"}, ValueError)
+    # non-str selection / bool in int fields / float / negative loop
+    rejects("tool", {**tgood, "selected": True}, TypeError)
+    rejects("tool", tool_out(True, 55), TypeError)
+    rejects("tool", tool_out(5, True), TypeError)
+    rejects("tool", tool_out(5, 55.0), TypeError)
+    rejects("tool", tool_out(-1, 55), ValueError)
+    # vocabulary: non-empty, duplicate-free (tools_nodup/nonempty)
+    rejects("tool", {**tgood, "tools": []}, ValueError)
+    rejects("tool", {**tgood, "tools": ["search", "search", "write"]}, ValueError)
+    rejects("tool", {**tgood, "tools": [1, 2]}, TypeError)
+    rejects("tool", {"loopIdx": 5, "tools": ["a"]}, KeyError)
+
+    # -- cross-type guards: the calibrations are SEPARATE objects --
+    for calib in ({"tau": 101, "loopIdx": 5}, {"tau": -1, "loopIdx": 5}):
+        try:
+            adapter.decide_act(calib, main)
+            raise AssertionError(f"tau off scale must raise ValueError: {calib}")
+        except ValueError:
+            pass
+    for calib in ({"tau": True, "loopIdx": 5}, {"tau": 75, "loopIdx": True},
+                  {"tau": 75.0, "loopIdx": 5}):
+        try:
+            adapter.decide_tool(calib, tmain)
+            raise AssertionError(f"non-integer calib field must raise TypeError: {calib}")
+        except TypeError:
+            pass
+    for calib in ({"loopIdx": 5}, {"tau": 75}):
+        try:
+            adapter.decide_act_result(calib, main)
+            raise AssertionError(
+                f"ill-formed act calib must be rejected: {calib}")
+        except (TypeError, ValueError, KeyError):
+            pass
+    # an act calibration does NOT gate a tool response (and vice versa)
+    try:
+        adapter.decide_act({"tau": tau0, "loopIdx": 5}, tmain)
+        raise AssertionError("an act calib must not gate a tool response")
+    except TypeError:
+        pass
+    try:
+        adapter.decide_tool({"tau": tau0, "loopIdx": 5}, main)
+        raise AssertionError("a tool calib must not gate an act response")
+    except TypeError:
+        pass
+    # ...nor a score / binary response (separate objects all around)
+    bin_r = adapter.build("choice", {"loopIdx": 5, "declared": ["a", "b"],
+                                     "probs": [50, 50]})
+    score_r = adapter.build("score", {"loopIdx": 5, "dist": [[84, 100]],
+                                      "confidence": 55})
+    for r in (tmain, bin_r, score_r):
+        try:
+            adapter.decide_act({"tau": tau0, "loopIdx": 5}, r)
+            raise AssertionError(
+                f"an act calib must not gate {type(r).__name__}")
+        except TypeError:
+            pass
+    for r in (main, bin_r, score_r):
+        try:
+            adapter.decide_tool({"tau": tau0, "loopIdx": 5}, r)
+            raise AssertionError(
+                f"a tool calib must not gate {type(r).__name__}")
+        except TypeError:
+            pass
+    # a binary Calib does NOT gate an act/tool response (decide()'s own
+    # type guard)
+    for r in (main, tmain):
+        try:
+            adapter.decide({"qtype": "act", "loopIdx": 5, "tau": tau0},
+                           "act", r)
+            raise AssertionError(
+                f"a binary Calib must not gate {type(r).__name__}")
+        except TypeError:
+            pass
+    print(f"ADAPTER ACT/TOOL: selection computed by exact cost "
+          f"(main {main.selected} nums {list(main.exactCostNums)}, "
+          f"tie {tie.selected}, floor-pair {floor_pair.selected}); "
+          f"tool {tmain.selected}; all frozen act/tool gate branches "
+          f"reproduced through the adapter path")
+
+
 def test_reference_matches_frozen_trace() -> None:
     ref = ReferenceEngine(V["state"])
     got = [ref.conf_at(t) for t in range(1, SPEC_T + 1)]
@@ -1547,6 +1863,7 @@ def main() -> int:
         test_adapter_rejects,
         test_adapter_bridge_report,
         test_adapter_score,
+        test_adapter_act_tool,
         test_reference_matches_frozen_trace,
         test_ishard_matches_frozen_and_boundary,
         test_gate_matches_frozen_and_boundary,

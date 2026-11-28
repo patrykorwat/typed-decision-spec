@@ -48,8 +48,40 @@ fallback). Design consequences mirrored here:
   abstains below the calibration's own threshold
   (`gateScore_defers_below`), at a wrong loop
   (`gateScore_wrong_loop_never_decides`), and with no calibration.
-  `decide_score_result` mirrors `gateScoreResult` (`ScoreDecisionResult`):
+* `decide_score_result` mirrors `gateScoreResult` (`ScoreDecisionResult`):
   the decision plus BOTH loop indices travel with the result.
+* `act` branch (B5, issue #22): the engine supplies the per-action cost
+  distributions on the per-entry scale; the exact cost numerators
+  (`exactCostNum` map) and the SELECTED action are COMPUTED — the minimum
+  exact cost with the FIRST-DECLARED tie-break (`sel_min` + `sel_first`),
+  never taken from the engine («computed, never supplied» extends to the
+  whole selection: a floor-based selection could not distinguish
+  same-floor/different-exact costs, so selection is by the exact
+  numerator — the mirror of the recorded direction "selekcja po
+  exactCostNum, NIGDY po floored expectedCost"). The confidence is a
+  SEPARATE supplied quantity with its own loop (trusted metadata,
+  `loops_are_metadata` precision — documented, not proved). Costs live on
+  their OWN scale (`MAX_COST = 100`) per entry — a cost off the scale or
+  a negative weight is a rejection.
+* `tool` branch (B5): the selected next step is engine-supplied and
+  validated by vocabulary membership (out-of-vocabulary = rejection,
+  never coerced); NO tie-break rule (recorded design decision — the
+  vocabulary carries no ordering quantity, act is the cost-bearing
+  sibling). The confidence is separate, its loop trusted metadata.
+* `decide_act(calib, response)` mirrors `gateAct`: the act calibration is
+  ITS OWN object (`{"tau", "loopIdx"}` — a CONFIDENCE threshold, the gate
+  compares τ with the response's confidence, never with any cost), the
+  payload is the SELECTED ACTION (never a cost, never the confidence —
+  `gateAct_payload_is_action`), and the gate abstains below τ
+  (`gateAct_defers_below`), at a wrong loop
+  (`gateAct_wrong_loop_never_decides`), and with no calibration. An act
+  calibration gates only `ActResponse` objects (separate objects —
+  mirror of Calib/ScoreCalib/ActCalib/ToolCalib separation).
+  `decide_act_result` mirrors `gateActResult` (`ActDecisionResult`):
+  the decision plus BOTH loop indices travel with the result.
+* `decide_tool` / `decide_tool_result` mirror `gateTool` /
+  `gateToolResult` (`ToolDecisionResult`, payload = the SELECTED TOOL)
+  with the same abstention and type-guard semantics.
 
 Engine output shape (`engine_output` dict): `{"loopIdx": int, "declared":
 [str, ...], "probs": [int, ...]}` — the per-loop readout rendered as a
@@ -67,9 +99,9 @@ from dataclasses import dataclass
 
 # the QTypes of Defer.lean, in declaration order
 QTYPES = ("choice", "noul", "multi", "score", "act", "tool")
-# later Phase B slices (B5–B6); multi is B6, act/tool B5 — score moved to
-# the producing branches in B4 (issue #21)
-LATER_SLICES = ("multi", "act", "tool")
+# later Phase B slices (B6); multi is the last slice — act/tool moved to
+# the producing branches in B5 (issue #22)
+LATER_SLICES = ("multi",)
 
 
 def _require_int(x, name):
@@ -183,6 +215,62 @@ class ScoreDecisionResult:
     calibLoopIdx: int
 
 
+@dataclass(frozen=True)
+class ActResponse:
+    """Mirror of `ActResponse` (QTypes.lean): per-action cost
+    distributions on the per-entry scale (`MAX_COST = 100` — each entry
+    carries its own scale bound, mirrored by validation), the exact cost
+    numerators EQUAL to the computed map (`nums_eq_map` — computed, never
+    supplied), the SELECTED action which IS the minimal-exact-cost one
+    with the FIRST-DECLARED tie-break (`sel_min` + `sel_first`), a
+    separate confidence with its own loop index. The selection lives on
+    the EXACT numerator, never on the floored expected cost. NO qtype
+    field — the dispatch key chose this constructor."""
+
+    actions: tuple
+    costDists: tuple
+    exactCostNums: tuple
+    selected: str
+    confidence: int
+    confidenceLoopIdx: int
+
+
+@dataclass(frozen=True)
+class ActDecisionResult:
+    """Mirror of `ActDecisionResult` (QTypes.lean): the decision plus
+    BOTH loop indices — the response's confidence loop and the
+    calibration's bound loop — so the pairing travels with the result."""
+
+    action: str | None
+    confLoopIdx: int
+    calibLoopIdx: int
+
+
+@dataclass(frozen=True)
+class ToolResponse:
+    """Mirror of `ToolResponse` (QTypes.lean): the selected next step from
+    a declared duplicate-free non-empty vocabulary (`sel_mem`), with a
+    confidence describing the trustworthiness of the choice itself and
+    the confidence's own source loop. NO tie-break rule (recorded design
+    decision: the vocabulary carries no ordering quantity — act is the
+    cost-bearing sibling). NO qtype field."""
+
+    tools: tuple
+    selected: str
+    confidence: int
+    confidenceLoopIdx: int
+
+
+@dataclass(frozen=True)
+class ToolDecisionResult:
+    """Mirror of `ToolDecisionResult` (QTypes.lean): the decision plus
+    BOTH loop indices (mirror of `ActDecisionResult`)."""
+
+    selected: str | None
+    confLoopIdx: int
+    calibLoopIdx: int
+
+
 def _computed_fields(probs):
     """conf = max(probs), argmax = FIRST index attaining it (the mirror of
     `conf_is_top` / `argmax = if 50 ≤ p then 0 else 1` — deterministic
@@ -287,6 +375,168 @@ def _build_score(engine_output):
     )
 
 
+# the act contract's OWN scale (mirror of MAX_COST in QTypes.lean); a
+# separate notion from the calibration threshold — τ compares against the
+# response's confidence, never against a cost
+MAX_COST = 100
+
+
+def _validated_confidence(engine_output):
+    """Shared tail validation for the act/tool branches: the confidence is
+    a SEPARATE supplied quantity on the [0,100] scale (strict int, both
+    directions), the loop index a strict non-negative int (mirror of
+    Nat). Returns (confidence, loopIdx)."""
+    _require_int(engine_output["loopIdx"], "loopIdx")
+    if engine_output["loopIdx"] < 0:
+        raise ValueError(
+            f"negative loop index (mirror of Nat): {engine_output['loopIdx']}"
+        )
+    confidence = engine_output["confidence"]
+    _require_int(confidence, "confidence")
+    if not 0 <= confidence <= 100:
+        raise ValueError(
+            f"confidence off the [0,100] scale (both directions): {confidence}"
+        )
+    return confidence, engine_output["loopIdx"]
+
+
+def _validated_act_output(engine_output):
+    """Validation for the `act` branch: actions non-empty and duplicate-
+    free (`actions_nodup`, `actions_nonempty`), `len_match` between
+    actions and costDists, each distribution's entries strict ints with
+    the cost on the act's OWN scale in BOTH directions (0 ≤ cost ≤
+    MAX_COST — per-entry scale, no negative weights, mirror of Nat) and
+    the weights normalized to 100 (`distCostSum = 100`). Returns
+    (loopIdx, actions, costDists, confidence)."""
+    if not isinstance(engine_output, dict):
+        raise TypeError(
+            f"engine_output must be a dict, got {type(engine_output).__name__}"
+        )
+    for key in ("loopIdx", "actions", "costDists", "confidence"):
+        if key not in engine_output:
+            raise KeyError(f"engine_output missing {key!r}")
+    actions = engine_output["actions"]
+    _require_bool_free_str_list(actions, "actions")
+    if not actions:
+        raise ValueError("actions must be non-empty (actions_nonempty)")
+    if len(set(actions)) != len(actions):
+        raise ValueError(f"actions must be unique (actions_nodup): {actions}")
+    costDists = engine_output["costDists"]
+    if not isinstance(costDists, list):
+        raise TypeError(f"costDists must be a list, got {type(costDists).__name__}")
+    if len(costDists) != len(actions):
+        raise ValueError(
+            f"actions/costDists length mismatch (len_match): "
+            f"{len(costDists)} != {len(actions)}"
+        )
+    for dist in costDists:
+        if not isinstance(dist, list):
+            raise TypeError(
+                f"costDists entries must be lists of [cost, weight], got {dist!r}"
+            )
+        total = 0
+        for entry in dist:
+            if not isinstance(entry, (list, tuple)):
+                raise TypeError(
+                    f"cost distribution entries must be [cost, weight], got {entry!r}"
+                )
+            if len(entry) != 2:
+                raise ValueError(
+                    f"cost entry must have exactly 2 fields, got {entry!r}"
+                )
+            c, w = entry
+            _require_int(c, "cost")
+            _require_int(w, "weight")
+            if not 0 <= c <= MAX_COST:
+                raise ValueError(
+                    f"cost off the act's own scale (both directions, "
+                    f"MAX_COST = {MAX_COST}): {c}"
+                )
+            if w < 0:
+                raise ValueError(f"negative weight (mirror of Nat): {w}")
+            total += w
+        if total != 100:
+            raise ValueError(
+                f"cost distribution weights must sum to 100 (distCostSum), got {total}"
+            )
+    confidence, loop = _validated_confidence(engine_output)
+    return loop, actions, costDists, confidence
+
+
+def _build_act(engine_output):
+    """`act` branch: the exact cost numerators and the SELECTED action are
+    COMPUTED (`costDists.map exactCostNum`, minimum, FIRST-declared
+    tie-break) — never taken from the engine. The selection lives on the
+    EXACT numerator: a floor-based selection could not distinguish
+    same-floor/different-exact costs (the `floor_loses_information`
+    witness [(1,50)] exact 50 vs [(4,20)] exact 80 — both floor to 0),
+    so the mirror of the recorded direction holds: selection by
+    `exactCostNum`, never by floored `expectedCost`."""
+    loop, actions, costDists, confidence = _validated_act_output(engine_output)
+    exact_nums = [sum(c * w for c, w in dist) for dist in costDists]
+    # FIRST index attaining the minimum: the first-declared tie-break
+    # (sel_min + sel_first, deterministic — abstention on ties would
+    # break the gate's monotonicity)
+    best = exact_nums.index(min(exact_nums))
+    return ActResponse(
+        actions=tuple(actions),
+        costDists=tuple(tuple(dist) for dist in costDists),
+        exactCostNums=tuple(exact_nums),
+        selected=actions[best],
+        confidence=confidence,
+        confidenceLoopIdx=loop,
+    )
+
+
+def _validated_tool_output(engine_output):
+    """Validation for the `tool` branch: the vocabulary non-empty and
+    duplicate-free (`tools_nodup`, `tools_nonempty`), the engine-supplied
+    selection a MEMBER of it (`sel_mem` — out-of-vocabulary is a
+    rejection, never a coercion), the confidence separate on the
+    [0,100] scale, the loop index a strict non-negative int. Returns
+    (loopIdx, tools, selected, confidence)."""
+    if not isinstance(engine_output, dict):
+        raise TypeError(
+            f"engine_output must be a dict, got {type(engine_output).__name__}"
+        )
+    for key in ("loopIdx", "tools", "selected", "confidence"):
+        if key not in engine_output:
+            raise KeyError(f"engine_output missing {key!r}")
+    tools = engine_output["tools"]
+    _require_bool_free_str_list(tools, "tools")
+    if not tools:
+        raise ValueError("tools must be non-empty (tools_nonempty)")
+    if len(set(tools)) != len(tools):
+        raise ValueError(f"tools must be unique (tools_nodup): {tools}")
+    selected = engine_output["selected"]
+    if not isinstance(selected, str):
+        raise TypeError(
+            f"selected must be str, got {type(selected).__name__}: {selected!r}"
+        )
+    if selected not in tools:
+        raise ValueError(
+            f"selected tool {selected!r} is out of the declared vocabulary "
+            f"(sel_mem): {tools}"
+        )
+    confidence, loop = _validated_confidence(engine_output)
+    return loop, tools, selected, confidence
+
+
+def _build_tool(engine_output):
+    """`tool` branch: the selected next step is engine-supplied and
+    validated by vocabulary membership — there is NO ordering quantity to
+    compute a selection from (recorded design decision: no tie-break
+    rule, the vocabulary distinctness makes the selection's identity
+    unambiguous)."""
+    loop, tools, selected, confidence = _validated_tool_output(engine_output)
+    return ToolResponse(
+        tools=tuple(tools),
+        selected=selected,
+        confidence=confidence,
+        confidenceLoopIdx=loop,
+    )
+
+
 def build(q, engine_output):
     """Keyed dispatch: `ResponseFor q` — the return shape is determined by
     the request's question type, the SAME `q` the request arrived with."""
@@ -296,9 +546,13 @@ def build(q, engine_output):
         return _build_noul(engine_output)
     if q == "score":
         return _build_score(engine_output)
+    if q == "act":
+        return _build_act(engine_output)
+    if q == "tool":
+        return _build_tool(engine_output)
     if q in LATER_SLICES:
         raise NotImplementedError(
-            f"q={q!r}: a later Phase B slice (B5–B6), not this one"
+            f"q={q!r}: a later Phase B slice (B6), not this one"
         )
     raise ValueError(f"unknown question type: {q!r} (expected one of {QTYPES})")
 
@@ -389,6 +643,109 @@ def decide_score_result(calib, response):
     tau, calib_loop = _validated_score_calib(calib)
     return ScoreDecisionResult(
         value=response.value if (
+            calib_loop == response.confidenceLoopIdx and tau <= response.confidence
+        ) else None,
+        confLoopIdx=response.confidenceLoopIdx,
+        calibLoopIdx=calib_loop,
+    )
+
+
+def _validated_act_tool_calib(calib, name):
+    """The act/tool calibration is ITS OWN object (mirror of `ActCalib` /
+    `ToolCalib` — separate from the binary `Calib` and from `ScoreCalib`):
+    `{"tau": int, "loopIdx": int}`, no `qtype` field. τ is a CONFIDENCE
+    threshold (`threshold_le_100`, ≤ 100 — the gate compares τ with the
+    response's confidence, NEVER with a cost; the cost scale MAX_COST is
+    a separate notion, unbound here)."""
+    if not isinstance(calib, dict):
+        raise TypeError(f"{name} must be a dict, got {type(calib).__name__}")
+    for key in ("tau", "loopIdx"):
+        if key not in calib:
+            raise KeyError(f"{name} missing {key!r}")
+    _require_int(calib["tau"], f"{name} tau")
+    _require_int(calib["loopIdx"], f"{name} loopIdx")
+    if not 0 <= calib["tau"] <= 100:
+        raise ValueError(f"{name} tau off the [0,100] scale: {calib['tau']}")
+    if calib["loopIdx"] < 0:
+        raise ValueError(
+            f"negative calib loop index (mirror of Nat): {calib['loopIdx']}"
+        )
+    return calib["tau"], calib["loopIdx"]
+
+
+def decide_act(calib, response):
+    """The honest act gate call site (mirror of `gateAct`): the act
+    calibration applies ONLY to act responses (enforced by the response
+    type — separate objects), the loop index is read FROM the response's
+    `confidenceLoopIdx`, and the payload is the SELECTED ACTION, never a
+    cost and never the confidence (`gateAct_payload_is_action`). `None`
+    calib mirrors "no calibration record"."""
+    if calib is None:
+        return None
+    if not isinstance(response, ActResponse):
+        raise TypeError(
+            "an act calibration gates only ActResponse objects "
+            f"(separate objects), got {type(response).__name__}"
+        )
+    tau, calib_loop = _validated_act_tool_calib(calib, "act calib")
+    if calib_loop != response.confidenceLoopIdx:
+        return None  # wrong loop: never decides (gateAct_wrong_loop)
+    return response.selected if tau <= response.confidence else None
+
+
+def decide_act_result(calib, response):
+    """Mirror of `gateActResult` (`ActDecisionResult`): the gate outcome
+    plus BOTH loop indices — the response's confidence loop and the
+    calibration's bound loop — so the conf-loop ↔ calib-loop pairing
+    travels with the result even on abstention. Requires an act
+    calibration (Lean's `gateActResult` takes a concrete `ActCalib`; the
+    no-record case is `decide_act(None, …)`)."""
+    if not isinstance(response, ActResponse):
+        raise TypeError(
+            "an act calibration gates only ActResponse objects "
+            f"(separate objects), got {type(response).__name__}"
+        )
+    tau, calib_loop = _validated_act_tool_calib(calib, "act calib")
+    return ActDecisionResult(
+        action=response.selected if (
+            calib_loop == response.confidenceLoopIdx and tau <= response.confidence
+        ) else None,
+        confLoopIdx=response.confidenceLoopIdx,
+        calibLoopIdx=calib_loop,
+    )
+
+
+def decide_tool(calib, response):
+    """The honest tool gate call site (mirror of `gateTool`): the tool
+    calibration applies ONLY to tool responses (separate objects), the
+    loop index is read FROM the response's `confidenceLoopIdx`, and the
+    payload is the SELECTED TOOL, never the confidence
+    (`gateTool_payload_is_tool`). `None` calib mirrors "no calibration
+    record"."""
+    if calib is None:
+        return None
+    if not isinstance(response, ToolResponse):
+        raise TypeError(
+            "a tool calibration gates only ToolResponse objects "
+            f"(separate objects), got {type(response).__name__}"
+        )
+    tau, calib_loop = _validated_act_tool_calib(calib, "tool calib")
+    if calib_loop != response.confidenceLoopIdx:
+        return None  # wrong loop: never decides (gateTool_wrong_loop)
+    return response.selected if tau <= response.confidence else None
+
+
+def decide_tool_result(calib, response):
+    """Mirror of `gateToolResult` (`ToolDecisionResult`): the gate outcome
+    plus BOTH loop indices (mirror of `decide_act_result`)."""
+    if not isinstance(response, ToolResponse):
+        raise TypeError(
+            "a tool calibration gates only ToolResponse objects "
+            f"(separate objects), got {type(response).__name__}"
+        )
+    tau, calib_loop = _validated_act_tool_calib(calib, "tool calib")
+    return ToolDecisionResult(
+        selected=response.selected if (
             calib_loop == response.confidenceLoopIdx and tau <= response.confidence
         ) else None,
         confLoopIdx=response.confidenceLoopIdx,
