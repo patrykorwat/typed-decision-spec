@@ -328,6 +328,15 @@ python3 conformance/conformance.py --fast # skip the Lean export
   the fixed YES/NO pair, computed per-label conf/argmax, `multi_set`
   with update locality, bare-threshold `gateMulti` lift — all six
   `QType` branches produce; `LATER_SLICES` empty).
+* **v2.2** (2026-11-28, #25 A1 — docs only): the supervisory-layer
+  design note (`docs/supervisory-layer-design.md`) — the nondeterministic
+  transition-relations layer over the gated contracts, recorded BEFORE
+  any code: `DecisionSystem` shape (List carriers — `Finset` is not in
+  Lean core), input discipline behind `ResponseFor`/the adapter,
+  `Response.probs` never a transition kernel, non-vacuity obligations as
+  construction-time witnesses, new `TypedDecision/Supervise/…` module
+  subtree, slice confirmations for #26/#27/#28; no Lean/API/frozen
+  change, suite unchanged (28/28).
 * **v2.0-b** (2026-11-27, #16 review follow-ups, documentation only:
   `131768d`): README no longer claims `ResponseFor` is a future
   target; proof-audit test count corrected 20 → 22 (matching the
@@ -470,3 +479,8 @@ longer holds fails the build loudly instead of silently drifting.
 * `docs/phase-b-adapter-design.md` — the Phase B design note (#18
   spike, `ba073d0`): dispatch-keyed pairing, slice plan, risks, the
   conformance-report shape the adapter feeds
+* `docs/supervisory-layer-design.md` — the supervisory-layer design
+  note (#25 spike, A1): the nondeterministic transition-relations layer
+  over the gated contracts — recorded decisions D1–D6, non-vacuity
+  obligations, slice plan for #26/#27/#28, prior-art positioning
+  (LeanGuard et al.)
