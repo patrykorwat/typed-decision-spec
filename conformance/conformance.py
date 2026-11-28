@@ -1207,6 +1207,212 @@ def test_adapter_bridge_report() -> None:
                            "tau": V["conf_trace"][4] + 1}, "noul", n) is None
 
 
+# ---- Phase B/B4: score slice of the reference adapter (issue #21) ----
+
+def test_adapter_score() -> None:
+    """B4 score slice (issue #21): `build(\"score\", …)` constructs the
+    mirror of `ScoreResponse` from REAL engine readouts — the value
+    COMPUTED from the distribution (floor of the exact EV, the mirror of
+    the canonical path `scoreOfDist`), the confidence SEPARATE, the
+    confidence loop as trusted metadata — and `decide_score` mirrors
+    `gateScore` in ALL frozen branches (below-τ, positive with the VALUE
+    payload, wrong-loop, boundary τ=100, updated `scoreOfDist` case),
+    compared against the frozen score vectors. No Lean change, no
+    frozen-vector change: the frozen fields already cover every gate
+    branch; this test adds the adapter-side path."""
+    ref = ReferenceEngine(V["state"])
+    tau0 = CALIBRATION_THRESHOLD
+
+    def score_out(conf_loop, dist, confidence):
+        return {"loopIdx": conf_loop, "dist": dist, "confidence": confidence}
+
+    # -- construction: value computed, confidence separate, loop trusted --
+    # main frozen case: value = the loop-2 readout via the degenerate
+    # distribution [[v, 100]] (exact = 100·v, floor = v), confidence =
+    # the loop-5 readout — each frozen field re-derived, none transcribed
+    main = adapter.build(
+        "score", score_out(5, [[ref.raw_at(2), 100]], ref.raw_at(5)))
+    assert isinstance(main, adapter.ScoreResponse)
+    assert main.value == V["score_value"] == ref.raw_at(2), (
+        "computed value != frozen score_value"
+    )
+    assert main.confidence == V["score_conf"] == ref.raw_at(5), (
+        "confidence != frozen score_conf"
+    )
+    assert main.confidenceLoopIdx == V["score_conf_loop"] == 5
+    assert not hasattr(main, "qtype"), (
+        "no qtype field: the dispatch key selected the constructor"
+    )
+    # separation made visible in the data (same_conf_diff_value twin):
+    # value and confidence are separate quantities, never equated
+    assert main.value != main.confidence
+    # the exact numerator is computed too (rational EV = exact_num / 100)
+    assert main.exact_num == 100 * main.value
+
+    # -- gate, branch 1: below-τ abstention (frozen score_gate) --
+    assert V["score_gate"] == "none"
+    assert adapter.decide_score({"tau": tau0, "loopIdx": 5}, main) is None, (
+        "below the threshold the score gate must abstain"
+    )
+    # no calibration record: no decision
+    assert adapter.decide_score(None, main) is None
+
+    # -- gate, branch 2: positive path, payload = the VALUE (never the
+    # confidence) — value = the loop-6 readout, confidence = loop-2's 84 --
+    pos = adapter.build(
+        "score", score_out(2, [[ref.raw_at(6), 100]], ref.raw_at(2)))
+    assert isinstance(pos, adapter.ScoreResponse)
+    assert pos.confidence == V["conf_trace"][1], (
+        "setup: the loop-2 readout is the frozen positive-path confidence"
+    )
+    got = adapter.decide_score({"tau": tau0, "loopIdx": 2}, pos)
+    assert V["score_gate_positive"] == "argmax" and got is not None
+    assert got == V["score_payload_positive"] == pos.value == ref.raw_at(6), (
+        "the payload must be the computed VALUE (frozen score_payload_positive)"
+    )
+    assert got != pos.confidence, (
+        "the payload must never be the confidence (84)"
+    )
+    # setup assertion: the threshold really decides at the own loop —
+    # the wrong-loop case below isolates the index guard
+    assert tau0 <= pos.confidence, (
+        "test setup: tau0 must decide at loop 2 absent the index check"
+    )
+    # -- gate, branch 3: wrong loop abstains despite 84 >= tau0
+    # (frozen score_gate_wrong_loop; calib bound to loop 5) --
+    assert V["score_gate_wrong_loop"] == "none"
+    assert adapter.decide_score({"tau": tau0, "loopIdx": 5}, pos) is None
+    # an index-ISOLATING threshold: tau = the confidence itself would
+    # decide at loop 2; at the wrong loop it still must not
+    assert adapter.decide_score({"tau": pos.confidence, "loopIdx": 5},
+                                pos) is None
+
+    # -- gate, branch 4: the SCALE BOUNDARY (τ = 100 with a constructed
+    # confidence AT 100; the trace readouts never reach 100) --
+    bnd = adapter.build("score", score_out(2, [[ref.raw_at(6), 100]], 100))
+    assert isinstance(bnd, adapter.ScoreResponse)
+    assert V["score_gate_boundary"] == "argmax"
+    assert adapter.decide_score({"tau": 100, "loopIdx": 2}, bnd) == bnd.value
+
+    # -- gate, branch 5: the updated `scoreOfDist` case — value computed
+    # from the demo distribution [(30,40),(70,60)], confidence from
+    # loop 5, calib at loop 5: EV 54 < tau0 ⇒ null (frozen fields) --
+    upd = adapter.build(
+        "score", score_out(5, [[30, 40], [70, 60]], ref.raw_at(5)))
+    assert isinstance(upd, adapter.ScoreResponse)
+    assert upd.value == V["score_ev"] == 54, (
+        "computed EV != frozen score_ev"
+    )
+    assert upd.exact_num == V["score_exact_num"] == 5400, (
+        "computed exact numerator != frozen score_exact_num"
+    )
+    assert V["score_gate_updated"] is None
+    assert adapter.decide_score({"tau": tau0, "loopIdx": 5}, upd) is None
+    # the FLOOR is real, not hypothetical (expectedValueTruncates mirror):
+    # [(0,50),(1,50)] has exact numerator 50 but integer EV 0
+    trunc = adapter.build("score", score_out(5, [[0, 50], [1, 50]], 55))
+    assert isinstance(trunc, adapter.ScoreResponse)
+    assert trunc.exact_num == 50 and trunc.value == 0
+
+    # -- the result shape (gateScoreResult mirror): BOTH indices travel --
+    res = adapter.decide_score_result({"tau": tau0, "loopIdx": 2}, pos)
+    assert res.value == pos.value and res.confLoopIdx == 2 and res.calibLoopIdx == 2
+    # the payload agrees with the plain gate (gateScoreResult_value twin)
+    assert res.value == adapter.decide_score({"tau": tau0, "loopIdx": 2}, pos)
+    # on abstention the pairing still travels (conf loop 2 vs calib loop 5)
+    res_n = adapter.decide_score_result({"tau": tau0, "loopIdx": 5}, pos)
+    assert res_n.value is None and res_n.confLoopIdx == 2 and res_n.calibLoopIdx == 5
+    assert res_n.value == adapter.decide_score({"tau": tau0, "loopIdx": 5}, pos)
+
+    # -- rejections (validation, never silent coercion) --
+    good = score_out(5, [[84, 100]], 55)
+
+    def rejects(out, exc):
+        try:
+            adapter.build("score", out)
+            raise AssertionError(
+                f"ill-formed score output must raise {exc.__name__}: {out}")
+        except exc:
+            pass
+
+    # baseline sanity: the good output builds and computes
+    assert adapter.build("score", good).value == 84
+    # bool in int fields (strict `type(x) is int`; isinstance would pass)
+    for out in ({**good, "confidence": True}, {**good, "loopIdx": True},
+                {**good, "dist": [[True, 100]]}, {**good, "dist": [[84, True]]}):
+        rejects(out, TypeError)
+    # float / str fields
+    for out in ({**good, "confidence": 55.0}, {**good, "confidence": "55"},
+                {**good, "dist": [[84.0, 100]]}, {**good, "dist": [["84", 100]]},
+                {**good, "loopIdx": 5.0}):
+        rejects(out, TypeError)
+    # confidence off the [0,100] scale in BOTH directions
+    for out in ({**good, "confidence": 101}, {**good, "confidence": -1}):
+        rejects(out, ValueError)
+    # dist values off the scale in BOTH directions (mirror of value_le_100
+    # over Nat — no negative weights either)
+    for out in ({**good, "dist": [[101, 100]]}, {**good, "dist": [[-1, 100]]},
+                {**good, "dist": [[84, -1], [0, 101]]}):
+        rejects(out, ValueError)
+    # non-normalized weights (mirror of distSum = 100)
+    for out in ({**good, "dist": [[84, 99]]}, {**good, "dist": [[84, 101]]},
+                {**good, "dist": [[30, 40], [70, 61]]}):
+        rejects(out, ValueError)
+    # empty dist / wrong arity / non-list dist
+    rejects({**good, "dist": []}, ValueError)
+    rejects({**good, "dist": [[84]]}, ValueError)
+    rejects({**good, "dist": ["84"]}, TypeError)
+    rejects({**good, "dist": "84"}, TypeError)
+    # negative loop index (mirror of Nat)
+    rejects({**good, "loopIdx": -1}, ValueError)
+    # missing key / ill-typed engine_output
+    rejects({"loopIdx": 5, "dist": [[84, 100]]}, KeyError)
+    rejects([("loopIdx", 5)], TypeError)
+
+    # -- decide_score rejections: the score calibration is ITS OWN object --
+    for calib in ({"tau": 101, "loopIdx": 5}, {"tau": -1, "loopIdx": 5}):
+        try:
+            adapter.decide_score(calib, main)
+            raise AssertionError(f"tau off scale must raise ValueError: {calib}")
+        except ValueError:
+            pass
+    for calib in ({"tau": True, "loopIdx": 5}, {"tau": 75, "loopIdx": True},
+                  {"tau": 75.0, "loopIdx": 5}):
+        try:
+            adapter.decide_score(calib, main)
+            raise AssertionError(f"non-integer calib field must raise TypeError: {calib}")
+        except TypeError:
+            pass
+    # a score calibration does NOT gate a binary response (separate objects)
+    bin_r = adapter.build("choice", {"loopIdx": 5, "declared": ["a", "b"],
+                                     "probs": [50, 50]})
+    try:
+        adapter.decide_score({"tau": tau0, "loopIdx": 5}, bin_r)
+        raise AssertionError("a score calib must not gate a binary response")
+    except TypeError:
+        pass
+    # ...and a binary Calib does NOT gate a score response (decide()'s own
+    # type guard — mirror of Calib/ScoreCalib being separate structures)
+    try:
+        adapter.decide({"qtype": "score", "loopIdx": 5, "tau": tau0},
+                       "score", main)
+        raise AssertionError("a binary Calib must not gate a score response")
+    except TypeError:
+        pass
+    # decide_score_result requires a well-formed calibration too
+    for calib in ({"tau": 101, "loopIdx": 5}, {"loopIdx": 5}, {"tau": 75}):
+        try:
+            adapter.decide_score_result(calib, main)
+            raise AssertionError(
+                f"ill-formed score calib must be rejected: {calib}")
+        except (TypeError, ValueError, KeyError):
+            pass
+    print(f"ADAPTER SCORE: value/conf/loop computed from engine readouts "
+          f"(main {main.value}/{main.confidence}/loop {main.confidenceLoopIdx}, "
+          f"pos payload {got}, updated EV {upd.value} exact {upd.exact_num}); "
+          f"all five frozen gate branches reproduced through the adapter path")
+
+
 def test_reference_matches_frozen_trace() -> None:
     ref = ReferenceEngine(V["state"])
     got = [ref.conf_at(t) for t in range(1, SPEC_T + 1)]
@@ -1340,6 +1546,7 @@ def main() -> int:
         test_adapter_build_choice_noul,
         test_adapter_rejects,
         test_adapter_bridge_report,
+        test_adapter_score,
         test_reference_matches_frozen_trace,
         test_ishard_matches_frozen_and_boundary,
         test_gate_matches_frozen_and_boundary,
